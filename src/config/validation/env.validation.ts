@@ -141,6 +141,26 @@ export class EnvironmentVariables {
     GOOGLE_REDIRECT_URI: string;
 
     @IsString()
+    UPLOAD_DESTINATION: string;
+
+    @IsInt()
+    @Min(1)
+    UPLOAD_MAX_FILE_SIZE: number;
+
+    @IsString()
+    UPLOAD_ALLOWED_MIME_TYPES: string;
+
+    @IsString()
+    CLOUDINARY_CLOUD_NAME: string;
+
+    @IsString()
+    CLOUDINARY_API_KEY: string;
+
+    @IsString()
+    CLOUDINARY_API_SECRET: string;
+    
+
+    @IsString()
     CLIENT_URL: string;
 
     @IsInt()

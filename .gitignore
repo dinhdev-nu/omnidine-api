@@ -3,6 +3,9 @@
 /node_modules
 /build
 
+docs/*.md
+/uploads
+
 # Logs
 logs
 *.log

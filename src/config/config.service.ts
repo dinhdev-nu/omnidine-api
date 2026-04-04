@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { ICorsConfig, IAppConfig, IJwtConfig, ILogConfig, IDatabaseConfig, IMailConfig, IClientConfig, IOAuth2Config, IThrottlerConfig } from "./configs";
+import { ICorsConfig, IAppConfig, IJwtConfig, ILogConfig, IDatabaseConfig, IMailConfig, IClientConfig, IOAuth2Config, IThrottlerConfig, IUploadConfig } from "./configs";
 import { CorsOptions } from "@nestjs/common/interfaces/external/cors-options.interface";
 
 interface IConfigService {
@@ -15,6 +15,7 @@ interface IConfigService {
     client: IClientConfig;
     oauth2: IOAuth2Config;
     throttler: IThrottlerConfig;
+    upload: IUploadConfig;
 }
 
 // Wrap ConfigService — reads from registerAs namespaces
@@ -34,6 +35,10 @@ export class AppConfigService implements IConfigService {
 
     get isProduction(): boolean {
         return this.app.nodeEnv === 'production';
+    }
+
+    get upload(): IUploadConfig {
+        return this.config.get<IUploadConfig>('upload')!;
     }
 
     get cors(): ICorsConfig {

@@ -23,6 +23,7 @@ import { SharedThrottlerModule } from './shared/throttler/throttler.module';
 import { AppThrottlerGuard } from './common/guards/app-throttler.guard';
 import { QueueModule } from './queue/queue.module';
 import { HealthModule } from './health/health.module';
+import { UploadModule } from './modules/upload/upload.module';
 
 @Module({
   controllers: [],
@@ -54,6 +55,7 @@ import { HealthModule } from './health/health.module';
 
     RedisModule,
     MongoModule,
+    UploadModule,
   ],
 })
 export class AppModule implements NestModule {
