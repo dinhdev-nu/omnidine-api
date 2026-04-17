@@ -8,9 +8,7 @@ import { RedisModule } from './databases/redis/redis.module';
 import { MongoModule } from './databases/mongo/mongo.module';
 import { RestaurantModule } from './modules/restaurant/restaurant.module';
 import { OrderModule } from './modules/order/order.module'
-import { RolesGuard } from './common/guards/roles.guard';
 import { PaymentModule } from './modules/payment/payment.module';
-import { JwtGuard } from './common/guards/jwt-auth.guard' ;
 import { SseModule } from './modules/sse/sse.module';
 import { AppConfigModule } from './config/config.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -24,13 +22,19 @@ import { AppThrottlerGuard } from './common/guards/app-throttler.guard';
 import { QueueModule } from './queue/queue.module';
 import { HealthModule } from './health/health.module';
 import { UploadModule } from './modules/upload/upload.module';
+import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { SystemRoleGuard } from './common/guards/system-role.guard';
+import { RestaurantAuthGuard } from './common/guards/restaurant-auth.guard';
+import { PermissionGuard } from './common/guards/permission.guard';
 
 @Module({
   controllers: [],
   providers: [
     { provide: APP_GUARD, useClass: AppThrottlerGuard },
-    { provide: APP_GUARD, useClass: JwtGuard },
-    { provide: APP_GUARD, useClass: RolesGuard },
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: SystemRoleGuard },
+    { provide: APP_GUARD, useClass: RestaurantAuthGuard },
+    { provide: APP_GUARD, useClass: PermissionGuard },
     { provide: APP_PIPE, useClass: ValidationPipeConfig },
     { provide: APP_INTERCEPTOR,  useClass: LoggingInterceptor },
     { provide: APP_INTERCEPTOR, useClass: TimeoutInterceptor },

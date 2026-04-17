@@ -13,29 +13,13 @@ import {
   APP_CUSTOM_THROTTLER_LIMIT,
   APP_CUSTOM_THROTTLER_TTL,
   APP_CUSTOM_THROTTLER_BLOCK,
-} from '../decorators/throttler/throttler.decorator';
+} from '../decorators';
 import { sha256 } from '@nestjs/throttler/dist/hash';
 import { THROTTLER_OPTIONS, THROTTLER_SKIP } from '@nestjs/throttler/dist/throttler.constants';
 
-/**
- * AppThrottlerGuard
- *
- * Mở rộng ThrottlerGuard mặc định:
- *  1. getTracker()   – ưu tiên userId (nếu đã login) thay vì IP
- *                      → tránh trường hợp nhiều user sau NAT chung IP
- *  2. generateKey()  – throttler "global" dùng key chỉ gồm tracker (không kèm route)
- *                      → rate-limit toàn server, không phân biệt endpoint
- *  3. canActivate()  – luôn chạy global throttler TRƯỚC, rồi mới chạy
- *                      default hoặc custom throttler → global không bị bypass
- *  4. throwThrottlingException() – trả về response chuẩn dự án
- *  5. shouldSkip()   – bỏ qua throttle cho internal health-check routes
- */
 @Injectable()
 export class AppThrottlerGuard extends ThrottlerGuard {
 
-  /**
-   * Lưu ref đến throttlers config để dùng trong canActivate.
-   */
   private throttlerOptions: ThrottlerOptions[];
 
   constructor(
