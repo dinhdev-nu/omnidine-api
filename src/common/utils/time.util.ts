@@ -29,6 +29,29 @@ export const TimeUtil = {
             case 'd': return num * 86400;
             default: throw new Error('Invalid TTL format. Use formats like "30s", "15m", "1h", or "2d".');
         }
-    }
+    },
+
+    formatDateByTimezone: (
+        date: Date = new Date(),
+        timeZone = 'Asia/Ho_Chi_Minh',
+    ): string => {
+        return new Intl.DateTimeFormat('en-CA', {
+            timeZone,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+        }).format(date);
+    },
+
+    getDateKeyByTimezone: (
+        date: Date = new Date(),
+        timeZone = 'Asia/Ho_Chi_Minh',
+    ): string => {
+        return TimeUtil.formatDateByTimezone(date, timeZone).replace(/-/g, '');
+    },
+
+    getCurrentHcmDateKey: (): string => {
+        return TimeUtil.getDateKeyByTimezone(new Date(), 'Asia/Ho_Chi_Minh');
+    },
 
 } as const
