@@ -1,58 +1,57 @@
-import { IsDate, IsEmail, IsEnum, IsMongoId, IsNumber, IsOptional, IsPhoneNumber, IsString, Min } from "class-validator";
-import { Shift } from "../schemas/staff.schema";
-import { Type } from "class-transformer";
-import { ROLE, Role, ROLE_LIST } from "src/common/constants/role.constant";
-
+import {
+    IsDateString,
+    IsEmail,
+    IsEnum,
+    IsOptional,
+    IsString,
+    IsUrl,
+    IsPhoneNumber,
+    Matches,
+    MaxLength,
+    MinLength,
+} from "class-validator";
+import { StaffPosition, StaffStatus } from "../schemas/staff.schema.xxx";
+import { Transform } from "class-transformer";
 
 export class CreateStaffDto {
 
-    @IsOptional() // Case staff chưa có tk
-    @IsMongoId({ message: 'ID người dùng không hợp lệ' })
     @IsString()
-    userId: string;
-
-    @IsMongoId({ message: 'ID nhà hàng không hợp lệ' })
-    @IsString()
-    restaurantId: string;
+    @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
+    @MinLength(1)
+    @MaxLength(30)
+    employee_code: string;
 
     @IsString()
-    name: string;
+    @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
+    @MinLength(1)
+    @MaxLength(150)
+    full_name: string;
 
-    @IsString()
-    @IsEmail({}, { message: 'Email không hợp lệ' })
-    email: string;
+    @IsEnum(StaffPosition, { message: "position phải là một vị trí hợp lệ" })
+    position: StaffPosition;
 
-    @IsString()
-    @IsPhoneNumber('VN', { message: 'Số điện thoại không hợp lệ' })
-    phone: string;
+    @IsDateString({}, { message: "hire_date phải là một chuỗi ngày tháng hợp lệ" })
+    hire_date: string;
 
     @IsOptional()
     @IsString()
-    avatar?: string;
+    @MaxLength(20)
+    @IsPhoneNumber("VN", { message: "phone phải là một số điện thoại hợp lệ của Việt Nam" })
+    phone?: string;
 
-    @IsEnum(ROLE_LIST, { message: 'Vai trò nhân viên không hợp lệ' })
-    role: Role;
+    @IsOptional()
+    @IsEmail({}, { message: "email phải là một địa chỉ email hợp lệ" })
+    email?: string;
 
-    @IsEnum(Shift, { message: 'Ca làm việc không hợp lệ' })
-    shift: Shift;
-
-    @IsString()
-    workingHours: string;
-
-    @IsNumber()
-    @Min(0, { message: 'Lương phải lớn hơn hoặc bằng 0' })
-    salary: number;
-
-    @Type(() => Date)
-    @IsDate({ message: 'Ngày tham gia không hợp lệ' })
-    joinDate: Date;
+    @IsOptional()
+    @IsEnum(StaffStatus, { message: "trạng thái không hợp lệ" })
+    status?: StaffStatus;
 
     @IsOptional()
     @IsString()
-    address?: string;
-
-    @IsOptional()
-    @IsString()
-    notes?: string;
-
+    @IsUrl({}, { message: "avatar_url phải là một URL hợp lệ" })
+    @Matches(/\.(jpg|jpeg|png|webp)$/i, {
+        message: "URL phải trỏ đến một định dạng ảnh hợp lệ (jpg, png, webp...)",
+    })
+    avatar_url?: string;
 }

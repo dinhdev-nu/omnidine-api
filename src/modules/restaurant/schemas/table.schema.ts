@@ -1,54 +1,101 @@
-import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
-import { HydratedDocument, Types } from "mongoose";
-import { TABLESTATUS } from "../dto/create-table.dto";
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument, Types } from 'mongoose';
+
+export enum TableStatus {
+  AVAILABLE = 'available',
+  OCCUPIED  = 'occupied',
+  RESERVED  = 'reserved',
+  CLEANING  = 'cleaning',
+  INACTIVE  = 'inactive',
+}
 
 export type TableDocument = HydratedDocument<Table>;
 
-@Schema({ timestamps: true })
-class Table {
+@Schema({
+  collection: 'tables',
+  timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' },
+  toJSON: {
+    virtuals: true,
+    transform: (_doc, ret: any) => {
+        delete ret.__v;
+        return ret;
+    }
+  }
+})
+export class Table {
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'Restaurant',
+    required: true,
+    index: true,
+  })
+  restaurant_id: Types.ObjectId;
 
-    @Prop({ required: true, type: Types.ObjectId, ref: "Restaurant" })
-    restaurantId: Types.ObjectId
+  @Prop({
+    type: String,
+    required: true,
+    trim: true,
+    maxlength: 20,
+  })
+  table_number: string;
 
-    @Prop({ required: true, trim : true })
-    number: string // Naame or number of the table
+  @Prop({
+    type: String,
+    default: null,
+    trim: true,
+    maxlength: 50,
+  })
+  name: string | null;
 
-    @Prop({ required: true, min: 1, default: 1 })
-    floor: number
+  @Prop({
+    type: Number,
+    required: true,
+    min: 1,
+    max: 99,
+  })
+  capacity: number;
 
-    // Vị trí
-    @Prop({ required: true, min: 0, default: 100 })
-    x: number
-    @Prop({ required: true, min: 0, default: 100 })
-    y: number
+  @Prop({
+    type: String,
+    enum: Object.values(TableStatus),
+    default: TableStatus.AVAILABLE,
+  })
+  status: TableStatus;
 
-    @Prop({ required: true, min: 1, max: 20, default: 4 })
-    capacity: number // Số chỗ ngồi
+  @Prop({
+    type: String,
+    default: null,
+    maxlength: 255,
+    sparse: true,   // cho phép nhiều document có null nhưng unique với giá trị thực
+    unique: true,
+  })
+  qr_code: string | null;
 
-    @Prop({ min: 0, default: 0, validate: {
-            validator: function (value: number) {   
-            return value <= this.capacity;
-        },
-        message: 'Current capacity cannot exceed total capacity.'
-    }})
-    currentCapacity: number // Số chỗ ngồi hiện tại 
+  @Prop({
+    type: String,
+    default: null,
+    maxlength: 500,
+  })
+  notes: string | null;
 
-    @Prop({ required: true, enum: TABLESTATUS, default: TABLESTATUS.AVAILABLE })
-    status: TABLESTATUS
+  @Prop({
+    type: Boolean,
+    default: true,
+  })
+  is_active: boolean;
 
-    @Prop({ required: true })
-    shape: string
-
-    @Prop({ type: Types.ObjectId, ref: "Staff" })
-    assignedServer?: Types.ObjectId
-
-    @Prop({ type: Types.ObjectId, ref: "Order" })
-    orderId?: Types.ObjectId
-
+  created_at: Date;
+  updated_at: Date;
 }
-
-export const TABLE_NAME = Table.name;
 
 export const TableSchema = SchemaFactory.createForClass(Table);
 
-TableSchema.index({ restaurantId: 1, floor: 1, number: 1 }, { unique: true });
+TableSchema.index(
+  { restaurant_id: 1, table_number: 1 },{ unique: true, partialFilterExpression: { table_number: { $type: 'string' } } }, 
+);
+
+TableSchema.index({ restaurant_id: 1, status: 1 });
+
+TableSchema.virtual('id').get(function () {
+  return (this._id as Types.ObjectId).toHexString();
+});
