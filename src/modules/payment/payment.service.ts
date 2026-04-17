@@ -1,130 +1,799 @@
-import { Injectable } from '@nestjs/common';
-import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { Payment, PaymentDocument, PaymentMethod, PaymentStatus } from './schemas/payment.schema';
-import { Connection, Model, Types } from 'mongoose';
-import { CreatePaymentByCashDto, CreatePaymentDto } from './dto/create-payment.dto';
-import { Order, OrderDocument, OrderStatus, OrderPaymentStatus } from '../order/schemas/order.schema';
-import { SseService } from '../sse/sse.service';
-import { AppConfigService } from 'src/config/config.service';
-import { BadRequestException, ConflictException, NotFoundException } from 'src/common/exceptions';
+import { Inject, Injectable } from '@nestjs/common';
+import { InjectConnection } from '@nestjs/mongoose';
+import { Connection, Types } from 'mongoose';
+import Redis from 'ioredis';
 import { ERROR_CODE } from 'src/common/constants/error-code.constant';
-import { InternalServerException } from 'src/common/exceptions/http/internal-server.exception';
+import { INJECTION_TOKEN } from 'src/common/constants/injection-token.constant';
+import {
+	BadRequestException,
+	ConflictException,
+	NotFoundException,
+	TooManyRequestException,
+} from 'src/common/exceptions';
+import { NumberUtil } from 'src/common/utils/number.util';
+import { ObjectIdUtil } from 'src/common/utils/object-id.util';
+import { StringUtil } from 'src/common/utils/string.util';
+import { TimeUtil } from 'src/common/utils/time.util';
+import {
+	CreatePaymentByCashDto,
+	CreatePaymentDto,
+	RefundPaymentDto,
+} from './dto/create-payment.dto';
+import {
+	IPaymentRepository,
+	IPaymentSettlementSummary,
+} from './repositories/payment.repository';
+import {
+	GATEWAY_METHODS,
+	INSTANT_COMPLETE_METHODS,
+	PAYMENT_NUMBER_PREFIX,
+	PAYMENT_NUMBER_SEQ_PADDING,
+	Payment,
+	PaymentDocument,
+	PaymentMethod,
+	PaymentStatus,
+	REFUNDABLE_PAYMENT_STATUSES,
+	REFERENCE_NUMBER_REQUIRED_METHODS,
+} from './schemas/payment.schema';
+import {
+	OrderDocument,
+	OrderPaymentStatus,
+	OrderStatus,
+} from '../order/schemas/order.schema.xxx';
+import { IOrderRepository } from '../order/repositories/order.repository';
 
+const PAYMENT_CREATE_ALLOWED_ORDER_STATUSES = new Set<OrderStatus>([
+	OrderStatus.CONFIRMED,
+	OrderStatus.PREPARING,
+	OrderStatus.READY,
+	OrderStatus.COMPLETED,
+]);
 
+const PAYMENT_CREATE_RATE_LIMIT_PREFIX = 'ratelimit:payment:create:';
+const PAYMENT_CREATE_RATE_LIMIT_TTL_SECONDS = 60;
+const PAYMENT_CREATE_RATE_LIMIT_MAX = 10;
+
+const PAYMENT_REFUND_RATE_LIMIT_PREFIX = 'ratelimit:payment:refund:';
+const PAYMENT_REFUND_RATE_LIMIT_TTL_SECONDS = 60;
+const PAYMENT_REFUND_RATE_LIMIT_MAX = 5;
+
+const PAYMENT_SEQUENCE_PREFIX = 'payment:seq:';
+const PAYMENT_SEQUENCE_TTL_SECONDS = 86400;
+
+const PAYMENT_PENDING_TTL_SECONDS = 900;
+const PAYMENT_PENDING_EXPIRES_MS = 15 * 60 * 1000;
+
+const CACHE_PAYMENT_PREFIX = 'payment:';
+const CACHE_PAYMENT_LIST_PREFIX = 'payment:list:';
+const CACHE_PENDING_PAYMENT_PREFIX = 'payment:pending:';
+
+interface ICreatePaymentInput {
+	restaurantId: Types.ObjectId;
+	orderId: Types.ObjectId;
+	method: PaymentMethod;
+	amount: number;
+	idempotencyKey: string;
+	cashTendered?: number | null;
+	referenceNumber?: string | null;
+	notes?: string | null;
+	returnUrl?: string | null;
+	processedBy?: Types.ObjectId | null;
+}
 
 @Injectable()
 export class PaymentService {
+	constructor(
+		@Inject(INJECTION_TOKEN.PAYMENT_REPOSITORY)
+		private readonly paymentRepository: IPaymentRepository,
 
-  constructor(
-    private readonly sseService: SseService,
-    private readonly config: AppConfigService,
-    @InjectModel(Payment.name) private readonly paymentModel: Model<PaymentDocument>,
-    @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
-    @InjectConnection() private readonly connection: Connection // Inject the Mongoose connection
-  ) {}
+		@Inject(INJECTION_TOKEN.ORDER_REPOSITORY)
+		private readonly orderRepository: IOrderRepository,
 
-  async paymentByCash(dto: CreatePaymentByCashDto, restaurantId: Types.ObjectId): Promise<Payment> {
-    const session = await this.connection.startSession()
-    session.startTransaction();
-    console.log('Starting payment by cash transaction...');
-    let order: OrderDocument | null = null;
-    try {
-      const { paidAmount } = dto; 
-      
-      // Kiểm tra đơn hàng
-      order = await this.orderModel.findOne({
-        _id: dto.orderId,
-        restaurantId: restaurantId,
-      }).session(session);
-      if (!order) throw new NotFoundException(ERROR_CODE.RESOURCE_NOT_FOUND, 'Order not found');
-      if (order.status === OrderStatus.CANCELLED)
-        throw new ConflictException(ERROR_CODE.CONFLICT_INPUT_ERROR, 'Order has been cancelled');
-      if (order.paymentStatus === OrderPaymentStatus.PAID) 
-        throw new ConflictException(ERROR_CODE.CONFLICT_INPUT_ERROR, 'Order has been paid');
-      if ( paidAmount < order.total)
-        throw new BadRequestException(ERROR_CODE.INVALID_INPUT_ERROR, 'Paid amount is less than order total');
+		@InjectConnection()
+		private readonly connection: Connection,
 
-      // Tạo bản ghi thanh toán
-      const changeAmount = paidAmount - order.total;
-      const payment = await this.paymentModel.create([{
-        orderId: order._id,
-        restaurantId: restaurantId,
+		@Inject(INJECTION_TOKEN.REDIS_CLIENT)
+		private readonly redis: Redis,
+	) {}
 
-        orderAmount: order.total,
-        paidAmount,
-        changeAmount,
+	async paymentByCash(
+		dto: CreatePaymentByCashDto,
+		restaurantId: Types.ObjectId | string,
+	): Promise<Record<string, unknown>> {
+		const method = dto.method;
+		if (method !== PaymentMethod.CASH) {
+			throw new BadRequestException(
+				ERROR_CODE.VALIDATION_ERROR,
+				'cash endpoint only accepts method=cash',
+			);
+		}
 
-        method: PaymentMethod.CASH,
-        status: PaymentStatus.SUCCESS,
-      }], { session });
+		const restaurantObjectId = ObjectIdUtil.toObjectId(restaurantId, 'restaurantId');
+		const orderId = ObjectIdUtil.toObjectId(dto.orderId, 'orderId');
+		const amount = NumberUtil.round2(Number(dto.paidAmount ?? 0));
+		const cashTendered = NumberUtil.round2(Number(dto.cashTendered ?? 0));
 
-      // Cập nhật trạng thái thanh toán đơn hàng
-      order.paymentStatus = OrderPaymentStatus.PAID;
-      order.status = OrderStatus.COMPLETED;
+		return this.createPaymentInternal({
+			restaurantId: restaurantObjectId,
+			orderId,
+			method,
+			amount,
+			idempotencyKey: dto.idempotencyKey,
+			cashTendered,
+			referenceNumber: null,
+			notes: dto.notes,
+			processedBy: dto.processedBy
+				? ObjectIdUtil.toObjectId(dto.processedBy, 'processedBy')
+				: null,
+		});
+	}
 
-      await order.save({ session });
-      await session.commitTransaction();
+	async paymentByQrCode(
+		dto: CreatePaymentDto,
+		restaurantId: Types.ObjectId | string,
+	): Promise<Record<string, unknown>> {
+		const method = dto.method;
+		if (method === PaymentMethod.CASH) {
+			throw new BadRequestException(
+				ERROR_CODE.VALIDATION_ERROR,
+				'cash payments must use /payments/cash endpoint',
+			);
+		}
 
-      return payment[0].toObject();
-    } catch (error) {
-      await session.abortTransaction();
-      console.error('Payment by cash failed:', error);
-      throw new InternalServerException(ERROR_CODE.TRANSACTION_ERROR, "Payment failed! Please try again.");
-    } finally {
-      await session.endSession();
+		const isSupported =
+			INSTANT_COMPLETE_METHODS.includes(method) || GATEWAY_METHODS.includes(method);
+		if (!isSupported) {
+			throw new BadRequestException(
+				ERROR_CODE.VALIDATION_ERROR,
+				`Unsupported payment method: ${method}`,
+			);
+		}
 
-      // Event 
-      if ( order && order.customer?.customerId ) {
-        this.sseService.sendEventToUser({
-          userId: order.customer.customerId.toString(),
-          type: 'payment_success',
-          data: order.toObject()
-        })
-      } 
-    }
-  }
+		const restaurantObjectId = ObjectIdUtil.toObjectId(restaurantId, 'restaurantId');
+		const orderId = ObjectIdUtil.toObjectId(dto.orderId, 'orderId');
+		const amount = NumberUtil.round2(Number(dto.amount ?? 0));
 
-  async paymentByQrCode(dto: CreatePaymentDto, restaurantId: Types.ObjectId): Promise<any & { qr_url: string }> {
-    
-    // Kiểm tra đơn hàng
-    const order = await this.orderModel.findOne({
-      _id: dto.orderId,
-      restaurantId: restaurantId,
-    }).lean();
-    if (!order) throw new NotFoundException(ERROR_CODE.RESOURCE_NOT_FOUND, 'Order not found');
-    if (order.status === OrderStatus.CANCELLED)
-      throw new ConflictException(ERROR_CODE.CONFLICT_INPUT_ERROR, 'Order has been cancelled');
-    if (order.paymentStatus === OrderPaymentStatus.PAID) 
-      throw new ConflictException(ERROR_CODE.CONFLICT_INPUT_ERROR, 'Order has been paid');
-    if (dto.amount !== order.total)
-      throw new BadRequestException(ERROR_CODE.INVALID_INPUT_ERROR, 'Payment amount does not match order total');
+		return this.createPaymentInternal({
+			restaurantId: restaurantObjectId,
+			orderId,
+			method,
+			amount,
+			idempotencyKey: dto.idempotencyKey,
+			referenceNumber: dto.referenceNumber,
+			notes: dto.notes,
+			returnUrl: dto.returnUrl,
+			processedBy: dto.processedBy
+				? ObjectIdUtil.toObjectId(dto.processedBy, 'processedBy')
+				: null,
+		});
+	}
 
-    // Tạo bản ghi thanh toán
-    // const payment = await this.paymentModel.create({
-    //   orderId: order._id,
-    //   restaurantId: restaurantId,
-    //   orderAmount: order.total,
-    //   paidAmount: 0,  // Chưa thanh toán
-    //   changeAmount: 0, // Chưa thanh toán
-    //   method: PaymentMethod.QR_CODE,
-    //   status: PaymentStatus.PENDING,
-    // });
-    const payment = {
-      _id: new Types.ObjectId(),
-    }
+	async refundPayment(dto: RefundPaymentDto): Promise<Record<string, unknown>> {
+		const restaurantId = ObjectIdUtil.toObjectId(dto.restaurantId, 'restaurantId');
+		const orderId = ObjectIdUtil.toObjectId(dto.orderId, 'orderId');
+		const paymentId = ObjectIdUtil.toObjectId(dto.paymentId, 'paymentId');
+		const refundAmount = NumberUtil.round2(Number(dto.refundAmount ?? 0));
+		const refundReason = StringUtil.normalizeNullableString(dto.refundReason);
 
-    // Generate QE code 
-    const bankId = this.config.client.bankId;
-    const accountNo = this.config.client.accountNo;
-    const template = this.config.client.template;
-    const amount = order.total;
-    const description = `PM${payment._id.toString()}`;
-    const qr_url = 
-      `https://img.vietqr.io/image/${bankId}-${accountNo}-${template}.jpg?amount=${amount}&addInfo=${description}`;
+		if (!refundReason) {
+			throw new BadRequestException(
+				ERROR_CODE.VALIDATION_ERROR,
+				'refundReason is required',
+			);
+		}
 
-    return { ...payment, qr_url };
-  }
+		await this.checkRefundRateLimit(orderId);
 
-  
-  
+		let transactionResult:
+			| {
+					updatedPayment: PaymentDocument;
+					nextOrderStatus: OrderStatus;
+					nextOrderPaymentStatus: OrderPaymentStatus;
+			  }
+			| null = null;
+
+		const session = await this.connection.startSession();
+		try {
+			transactionResult = await session.withTransaction(async () => {
+				const order = await this.orderRepository.findMutableByIdInRestaurant(
+					restaurantId,
+					orderId,
+					{ session },
+				);
+
+				if (!order) {
+					throw new NotFoundException(
+						ERROR_CODE.RESOURCE_NOT_FOUND,
+						'Order not found',
+						{ order_id: orderId.toString(), restaurant_id: restaurantId.toString() },
+					);
+				}
+
+				const payment = await this.paymentRepository.findByIdInOrder(
+					restaurantId,
+					orderId,
+					paymentId,
+					{ session },
+				);
+
+				if (!payment) {
+					throw new NotFoundException(
+						ERROR_CODE.RESOURCE_NOT_FOUND,
+						'Payment not found',
+						{
+							payment_id: paymentId.toString(),
+							order_id: orderId.toString(),
+							restaurant_id: restaurantId.toString(),
+						},
+					);
+				}
+
+				if (!REFUNDABLE_PAYMENT_STATUSES.includes(payment.status)) {
+					throw new ConflictException(
+						ERROR_CODE.CONFLICT_ERROR,
+						`Cannot refund payment in status ${payment.status}`,
+					);
+				}
+
+				const maxRefundable = NumberUtil.round2(
+					Number(payment.amount ?? 0) - Number(payment.refunded_amount ?? 0),
+				);
+
+				if (refundAmount <= 0) {
+					throw new BadRequestException(
+						ERROR_CODE.VALIDATION_ERROR,
+						'refundAmount must be greater than 0',
+					);
+				}
+
+				if (refundAmount > maxRefundable) {
+					throw new BadRequestException(
+						ERROR_CODE.VALIDATION_ERROR,
+						`refundAmount exceeds max refundable amount: ${maxRefundable}`,
+					);
+				}
+
+				const nextRefundedAmount = NumberUtil.round2(
+					Number(payment.refunded_amount ?? 0) + refundAmount,
+				);
+
+				const nextPaymentStatus =
+					nextRefundedAmount >= Number(payment.amount ?? 0)
+						? PaymentStatus.REFUNDED
+						: PaymentStatus.PARTIALLY_REFUNDED;
+
+				const updatedPayment = await this.paymentRepository.updateByIdInOrder(
+					restaurantId,
+					orderId,
+					paymentId,
+					{
+						refunded_amount: nextRefundedAmount,
+						refund_reason: refundReason,
+						refunded_at: payment.refunded_at ?? new Date(),
+						status: nextPaymentStatus,
+					},
+					{ session },
+				);
+
+				if (!updatedPayment) {
+					throw new ConflictException(
+						ERROR_CODE.CONFLICT_ERROR,
+						'Failed to update payment refund state',
+					);
+				}
+
+				const settlement = await this.paymentRepository.aggregateSettlementByOrder(orderId, {
+					session,
+				});
+
+				const nextOrderPaymentStatus = this.resolveOrderPaymentStatus(
+					settlement,
+					Number(order.total_amount ?? 0),
+				);
+
+				const nextOrderStatus =
+					nextOrderPaymentStatus === OrderPaymentStatus.REFUNDED &&
+					order.status === OrderStatus.COMPLETED
+						? OrderStatus.REFUNDED
+						: order.status;
+
+				const updatedOrder = await this.orderRepository.updatePaymentState(
+					restaurantId,
+					orderId,
+					nextOrderPaymentStatus,
+					nextOrderStatus,
+					{ session },
+				);
+
+				if (!updatedOrder) {
+					throw new ConflictException(
+						ERROR_CODE.CONFLICT_ERROR,
+						'Failed to update order payment state',
+					);
+				}
+
+				return {
+					updatedPayment,
+					nextOrderStatus,
+					nextOrderPaymentStatus,
+				};
+			});
+		} finally {
+			await session.endSession();
+		}
+
+		if (!transactionResult?.updatedPayment) {
+			throw new ConflictException(
+				ERROR_CODE.CONFLICT_ERROR,
+				'Failed to refund payment',
+			);
+		}
+
+		const { updatedPayment, nextOrderStatus, nextOrderPaymentStatus } = transactionResult;
+
+		await this.invalidatePaymentCaches(orderId, paymentId, false);
+
+		return {
+			payment_id: paymentId.toString(),
+			refunded_amount: updatedPayment.refunded_amount,
+			payment_status: updatedPayment.status,
+			refunded_at: updatedPayment.refunded_at,
+			order_payment_status: nextOrderPaymentStatus,
+			order_status: nextOrderStatus,
+		};
+	}
+
+	private async createPaymentInternal(
+		input: ICreatePaymentInput,
+	): Promise<Record<string, unknown>> {
+		await this.checkCreateRateLimit(input.orderId);
+
+		const existing = await this.paymentRepository.findByRestaurantAndIdempotencyKey(
+			input.restaurantId,
+			input.idempotencyKey,
+		);
+
+		if (existing) {
+			return this.resolveIdempotentResult(existing, input.restaurantId, input.orderId);
+		}
+
+		let transactionResult:
+			| {
+					createdPayment: PaymentDocument;
+					orderPaymentStatus: OrderPaymentStatus | null;
+			  }
+			| null = null;
+
+		const session = await this.connection.startSession();
+		try {
+			transactionResult = await session.withTransaction(async () => {
+				const existingInTxn = await this.paymentRepository.findByRestaurantAndIdempotencyKey(
+					input.restaurantId,
+					input.idempotencyKey,
+					{ session },
+				);
+
+				if (existingInTxn) {
+					const orderInTxn = await this.orderRepository.findMutableByIdInRestaurant(
+						input.restaurantId,
+						input.orderId,
+						{ session },
+					);
+
+					const orderPaymentStatus = (orderInTxn?.payment_status ??
+						OrderPaymentStatus.UNPAID) as OrderPaymentStatus;
+
+					if (!ObjectIdUtil.isSameObjectId(existingInTxn.order_id, input.orderId)) {
+						throw new ConflictException(
+							ERROR_CODE.CONFLICT_ERROR,
+							'idempotencyKey is already used for another order',
+						);
+					}
+
+					if (existingInTxn.status === PaymentStatus.FAILED) {
+						throw new ConflictException(
+							ERROR_CODE.CONFLICT_ERROR,
+							'Idempotency key is already bound to a failed payment, please use a new key',
+						);
+					}
+
+					return {
+						createdPayment: existingInTxn,
+						orderPaymentStatus,
+					};
+				}
+
+				const order = await this.orderRepository.findMutableByIdInRestaurant(
+					input.restaurantId,
+					input.orderId,
+					{ session },
+				);
+
+				if (!order) {
+					throw new NotFoundException(
+						ERROR_CODE.RESOURCE_NOT_FOUND,
+						'Order not found',
+						{
+							order_id: input.orderId.toString(),
+							restaurant_id: input.restaurantId.toString(),
+						},
+					);
+				}
+
+				this.assertOrderCanCreatePayment(order);
+
+				const settlementBefore = await this.paymentRepository.aggregateSettlementByOrder(
+					input.orderId,
+					{ session },
+				);
+
+				const remainingAmount = this.computeRemainingAmount(
+					Number(order.total_amount ?? 0),
+					settlementBefore.net_paid,
+					settlementBefore.pending_hold,
+				);
+
+				if (remainingAmount <= 0) {
+					throw new ConflictException(
+						ERROR_CODE.CONFLICT_ERROR,
+						'Order is already fully paid',
+					);
+				}
+
+				if (input.amount <= 0) {
+					throw new BadRequestException(
+						ERROR_CODE.VALIDATION_ERROR,
+						'Payment amount must be greater than 0',
+					);
+				}
+
+				if (input.amount > remainingAmount) {
+					throw new BadRequestException(
+						ERROR_CODE.VALIDATION_ERROR,
+						`Payment amount exceeds remaining amount: ${remainingAmount}`,
+					);
+				}
+
+				this.assertMethodPayload(input);
+
+				const paymentNumber = await this.generatePaymentNumber(input.restaurantId);
+				const now = new Date();
+				const isGateway = GATEWAY_METHODS.includes(input.method);
+				const status = isGateway ? PaymentStatus.PENDING : PaymentStatus.COMPLETED;
+
+				const cashTendered =
+					input.method === PaymentMethod.CASH
+						? NumberUtil.round2(Number(input.cashTendered ?? 0))
+						: null;
+
+				const changeAmount =
+					input.method === PaymentMethod.CASH
+						? NumberUtil.round2(Number(cashTendered ?? 0) - input.amount)
+						: 0;
+
+				const normalizedReference = StringUtil.normalizeNullableString(
+					input.referenceNumber,
+				);
+
+				const createdPayment = await this.paymentRepository.createOne(
+					{
+						order_id: input.orderId,
+						restaurant_id: input.restaurantId,
+						payment_number: paymentNumber,
+						amount: NumberUtil.round2(input.amount),
+						cash_tendered: cashTendered,
+						currency: order.currency ?? 'VND',
+						method: input.method,
+						status,
+						reference_number: normalizedReference,
+						idempotency_key: input.idempotencyKey,
+						change_amount: changeAmount,
+						processed_by: input.processedBy ?? null,
+						processed_at: status === PaymentStatus.COMPLETED ? now : null,
+						expires_at: status === PaymentStatus.PENDING
+							? new Date(now.getTime() + PAYMENT_PENDING_EXPIRES_MS)
+							: null,
+						failed_reason: null,
+						gateway_response: null,
+						refunded_amount: 0,
+						refunded_at: null,
+						refund_reason: null,
+						notes: StringUtil.normalizeNullableString(input.notes),
+					} as Partial<Payment>,
+					{ session },
+				);
+
+				if (!createdPayment) {
+					throw new ConflictException(
+						ERROR_CODE.CONFLICT_ERROR,
+						'Failed to create payment',
+					);
+				}
+
+				let orderPaymentStatus: OrderPaymentStatus | null = null;
+				if (status === PaymentStatus.COMPLETED) {
+					const settlementAfter = await this.paymentRepository.aggregateSettlementByOrder(
+						input.orderId,
+						{ session },
+					);
+
+					orderPaymentStatus = this.resolveOrderPaymentStatus(
+						settlementAfter,
+						Number(order.total_amount ?? 0),
+					);
+
+					const updatedOrder = await this.orderRepository.updatePaymentState(
+						input.restaurantId,
+						input.orderId,
+						orderPaymentStatus,
+						undefined,
+						{ session },
+					);
+
+					if (!updatedOrder) {
+						throw new ConflictException(
+							ERROR_CODE.CONFLICT_ERROR,
+							'Failed to update order payment status',
+						);
+					}
+				} else {
+					orderPaymentStatus = order.payment_status as OrderPaymentStatus;
+				}
+
+				return {
+					createdPayment,
+					orderPaymentStatus,
+				};
+			});
+		} finally {
+			await session.endSession();
+		}
+
+		if (!transactionResult?.createdPayment) {
+			throw new ConflictException(
+				ERROR_CODE.CONFLICT_ERROR,
+				'Failed to create payment, it may have been modified by another process',
+			);
+		}
+
+		const { createdPayment, orderPaymentStatus } = transactionResult;
+
+		await this.invalidatePaymentCaches(
+			input.orderId,
+			ObjectIdUtil.toObjectId((createdPayment as any)._id, 'payment_id'),
+			createdPayment.status === PaymentStatus.PENDING,
+			createdPayment,
+		);
+
+		return this.toCreatePaymentResponse(createdPayment, orderPaymentStatus, false);
+	}
+
+	private assertOrderCanCreatePayment(order: OrderDocument): void {
+		if (!PAYMENT_CREATE_ALLOWED_ORDER_STATUSES.has(order.status)) {
+			throw new ConflictException(
+				ERROR_CODE.CONFLICT_ERROR,
+				`Cannot create payment while order is in status ${order.status}`,
+			);
+		}
+	}
+
+	private assertMethodPayload(input: ICreatePaymentInput): void {
+		if (input.method === PaymentMethod.CASH) {
+			const cashTendered = Number(input.cashTendered ?? 0);
+			if (cashTendered <= 0) {
+				throw new BadRequestException(
+					ERROR_CODE.VALIDATION_ERROR,
+					'cashTendered is required for cash payment',
+				);
+			}
+
+			if (cashTendered < input.amount) {
+				throw new BadRequestException(
+					ERROR_CODE.VALIDATION_ERROR,
+					'cashTendered must be greater than or equal to amount',
+				);
+			}
+			return;
+		}
+
+		if (input.cashTendered !== undefined && input.cashTendered !== null) {
+			throw new BadRequestException(
+				ERROR_CODE.VALIDATION_ERROR,
+				`cashTendered must be null for method ${input.method}`,
+			);
+		}
+
+		if (
+			REFERENCE_NUMBER_REQUIRED_METHODS.includes(input.method) &&
+			!StringUtil.normalizeNullableString(input.referenceNumber)
+		) {
+			throw new BadRequestException(
+				ERROR_CODE.VALIDATION_ERROR,
+				`referenceNumber is required for method ${input.method}`,
+			);
+		}
+	}
+
+	private resolveOrderPaymentStatus(
+		settlement: IPaymentSettlementSummary,
+		orderTotal: number,
+	): OrderPaymentStatus {
+		if (settlement.total_refunded > 0 && settlement.net_paid <= 0) {
+			return OrderPaymentStatus.REFUNDED;
+		}
+
+		if (settlement.total_refunded > 0 && settlement.net_paid > 0) {
+			return OrderPaymentStatus.PARTIALLY_REFUNDED;
+		}
+
+		if (settlement.net_paid <= 0) {
+			return OrderPaymentStatus.UNPAID;
+		}
+
+		if (settlement.net_paid < orderTotal) {
+			return OrderPaymentStatus.PARTIAL;
+		}
+
+		return OrderPaymentStatus.PAID;
+	}
+
+	private computeRemainingAmount(
+		orderTotal: number,
+		netPaid: number,
+		pendingHold: number,
+	): number {
+		const remaining = orderTotal - netPaid - pendingHold;
+		return NumberUtil.round2(Math.max(remaining, 0));
+	}
+
+	private async resolveIdempotentResult(
+		payment: PaymentDocument,
+		restaurantId: Types.ObjectId,
+		requestedOrderId: Types.ObjectId,
+	): Promise<Record<string, unknown>> {
+		if (!ObjectIdUtil.isSameObjectId(payment.order_id, requestedOrderId)) {
+			throw new ConflictException(
+				ERROR_CODE.CONFLICT_ERROR,
+				'idempotencyKey is already used for another order',
+			);
+		}
+
+		if (payment.status === PaymentStatus.FAILED) {
+			throw new ConflictException(
+				ERROR_CODE.CONFLICT_ERROR,
+				'Idempotency key is already bound to a failed payment, please use a new key',
+			);
+		}
+
+		const order = await this.orderRepository.findByIdInRestaurant(
+			restaurantId,
+			requestedOrderId,
+		);
+
+		return this.toCreatePaymentResponse(
+			payment,
+			(order?.payment_status ?? OrderPaymentStatus.UNPAID) as OrderPaymentStatus,
+			true,
+		);
+	}
+
+	private toCreatePaymentResponse(
+		payment: PaymentDocument,
+		orderPaymentStatus?: OrderPaymentStatus | null,
+		idempotent = false,
+	): Record<string, unknown> {
+		return {
+			id: this.readEntityId(payment as any),
+			payment_number: payment.payment_number,
+			order_id: this.readValueAsString((payment as any).order_id),
+			amount: payment.amount,
+			cash_tendered: (payment as any).cash_tendered ?? null,
+			change_amount: payment.change_amount,
+			method: payment.method,
+			status: payment.status,
+			reference_number: payment.reference_number,
+			processed_by: this.readValueAsString((payment as any).processed_by),
+			processed_at: payment.processed_at,
+			expires_at: (payment as any).expires_at ?? null,
+			order_payment_status: orderPaymentStatus ?? null,
+			created_at: (payment as any).created_at,
+			idempotent,
+		};
+	}
+
+	private async generatePaymentNumber(restaurantId: Types.ObjectId): Promise<string> {
+		const dateKey = TimeUtil.getCurrentHcmDateKey();
+		const seqKey = `${PAYMENT_SEQUENCE_PREFIX}${restaurantId.toString()}:${dateKey}`;
+		const sequence = await this.redis.incr(seqKey);
+
+		if (sequence === 1) {
+			await this.redis.expire(seqKey, PAYMENT_SEQUENCE_TTL_SECONDS);
+		}
+
+		const width = sequence > 9999 ? 5 : PAYMENT_NUMBER_SEQ_PADDING;
+		return `${PAYMENT_NUMBER_PREFIX}-${dateKey}-${String(sequence).padStart(width, '0')}`;
+	}
+
+	private async checkCreateRateLimit(orderId: Types.ObjectId): Promise<void> {
+		await this.checkRateLimit(
+			`${PAYMENT_CREATE_RATE_LIMIT_PREFIX}${orderId.toString()}`,
+			PAYMENT_CREATE_RATE_LIMIT_MAX,
+			PAYMENT_CREATE_RATE_LIMIT_TTL_SECONDS,
+			'Too many payment create requests',
+		);
+	}
+
+	private async checkRefundRateLimit(orderId: Types.ObjectId): Promise<void> {
+		await this.checkRateLimit(
+			`${PAYMENT_REFUND_RATE_LIMIT_PREFIX}${orderId.toString()}`,
+			PAYMENT_REFUND_RATE_LIMIT_MAX,
+			PAYMENT_REFUND_RATE_LIMIT_TTL_SECONDS,
+			'Too many refund requests',
+		);
+	}
+
+	private async checkRateLimit(
+		key: string,
+		max: number,
+		ttlSeconds: number,
+		message: string,
+	): Promise<void> {
+		const count = await this.redis.incr(key);
+		if (count === 1) {
+			await this.redis.expire(key, ttlSeconds);
+		}
+
+		if (count > max) {
+			throw new TooManyRequestException(ERROR_CODE.TOO_MANY_REQUESTS, message);
+		}
+	}
+
+	private async invalidatePaymentCaches(
+		orderId: Types.ObjectId,
+		paymentId: Types.ObjectId,
+		setPendingCache: boolean,
+		payment?: PaymentDocument,
+	): Promise<void> {
+		const keys = [
+			`${CACHE_PAYMENT_LIST_PREFIX}${orderId.toString()}`,
+			`${CACHE_PAYMENT_PREFIX}${paymentId.toString()}`,
+			`${CACHE_PENDING_PAYMENT_PREFIX}${paymentId.toString()}`,
+		];
+
+		await this.redis.del(...keys);
+
+		if (setPendingCache && payment) {
+			await this.redis.set(
+				`${CACHE_PENDING_PAYMENT_PREFIX}${paymentId.toString()}`,
+				JSON.stringify({
+					amount: payment.amount,
+					payment_number: payment.payment_number,
+					expires_at: (payment as any).expires_at ?? null,
+				}),
+				'EX',
+				PAYMENT_PENDING_TTL_SECONDS,
+			);
+		}
+	}
+
+	private readEntityId(entity: Record<string, unknown>): string {
+		const id = entity.id as string | undefined;
+		if (id) {
+			return String(id);
+		}
+
+		const _id = entity._id as Types.ObjectId | string | undefined;
+		if (_id) {
+			return String(_id);
+		}
+
+		return '';
+	}
+
+	private readValueAsString(value: unknown): string | null {
+		if (value === null || value === undefined) {
+			return null;
+		}
+		return String(value);
+	}
 }
