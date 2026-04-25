@@ -78,6 +78,18 @@ interface ICreatePaymentInput {
 	notes?: string | null;
 	returnUrl?: string | null;
 	processedBy?: Types.ObjectId | null;
+	paymentUrl?: string | null;
+	qrCodeUrl?: string | null;
+	gatewayResponse?: Record<string, unknown> | null;
+}
+
+interface IGatewayWebhookInput {
+	paymentId: Types.ObjectId | string;
+	amount?: number | null;
+	resultCode: number;
+	transId?: string | null;
+	message?: string | null;
+	gatewayResponse?: Record<string, unknown> | null;
 }
 
 @Injectable()
@@ -107,7 +119,7 @@ export class PaymentService {
 				'cash endpoint only accepts method=cash',
 			);
 		}
-
+		
 		const restaurantObjectId = ObjectIdUtil.toObjectId(restaurantId, 'restaurantId');
 		const orderId = ObjectIdUtil.toObjectId(dto.orderId, 'orderId');
 		const amount = NumberUtil.round2(Number(dto.paidAmount ?? 0));
@@ -128,7 +140,7 @@ export class PaymentService {
 		});
 	}
 
-	async paymentByQrCode(
+	async createNonCashPayment(
 		dto: CreatePaymentDto,
 		restaurantId: Types.ObjectId | string,
 	): Promise<Record<string, unknown>> {
@@ -332,6 +344,7 @@ export class PaymentService {
 		const { updatedPayment, nextOrderStatus, nextOrderPaymentStatus } = transactionResult;
 
 		await this.invalidatePaymentCaches(orderId, paymentId, false);
+		await this.cachePaymentDetail(updatedPayment);
 
 		return {
 			payment_id: paymentId.toString(),
@@ -341,6 +354,265 @@ export class PaymentService {
 			order_payment_status: nextOrderPaymentStatus,
 			order_status: nextOrderStatus,
 		};
+	}
+
+	async listPayments(
+		restaurantId: Types.ObjectId | string,
+		orderId: Types.ObjectId | string,
+	): Promise<Record<string, unknown>> {
+		const restaurantObjectId = ObjectIdUtil.toObjectId(restaurantId, 'restaurantId');
+		const orderObjectId = ObjectIdUtil.toObjectId(orderId, 'orderId');
+		const cacheKey = `${CACHE_PAYMENT_LIST_PREFIX}${orderObjectId.toString()}`;
+
+		const cached = await this.redis.get(cacheKey);
+		if (cached) {
+			return JSON.parse(cached) as Record<string, unknown>;
+		}
+
+		const order = await this.orderRepository.findByIdInRestaurant(
+			restaurantObjectId,
+			orderObjectId,
+		);
+
+		if (!order) {
+			throw new NotFoundException(
+				ERROR_CODE.RESOURCE_NOT_FOUND,
+				'Order not found',
+				{
+					order_id: orderObjectId.toString(),
+					restaurant_id: restaurantObjectId.toString(),
+				},
+			);
+		}
+
+		const [payments, settlement] = await Promise.all([
+			this.paymentRepository.listByOrder(restaurantObjectId, orderObjectId),
+			this.paymentRepository.aggregateSettlementByOrder(orderObjectId),
+		]);
+
+		const response = {
+			payments: payments.map((payment) => this.toPaymentListItem(payment)),
+			summary: this.buildOrderPaymentSummary(order, settlement),
+		};
+
+		await this.redis.set(cacheKey, JSON.stringify(response), 'EX', 120);
+
+		return response;
+	}
+
+	async getPaymentById(
+		restaurantId: Types.ObjectId | string,
+		orderId: Types.ObjectId | string,
+		paymentId: Types.ObjectId | string,
+		includeGatewayResponse = false,
+	): Promise<Record<string, unknown>> {
+		const restaurantObjectId = ObjectIdUtil.toObjectId(restaurantId, 'restaurantId');
+		const orderObjectId = ObjectIdUtil.toObjectId(orderId, 'orderId');
+		const paymentObjectId = ObjectIdUtil.toObjectId(paymentId, 'paymentId');
+		const cacheKey = `${CACHE_PAYMENT_PREFIX}${paymentObjectId.toString()}`;
+
+		if (!includeGatewayResponse) {
+			const cached = await this.redis.get(cacheKey);
+			if (cached) {
+				return JSON.parse(cached) as Record<string, unknown>;
+			}
+		}
+
+		const payment = await this.paymentRepository.findById(paymentObjectId);
+		if (!payment) {
+			throw new NotFoundException(
+				ERROR_CODE.RESOURCE_NOT_FOUND,
+				'Payment not found',
+				{ payment_id: paymentObjectId.toString() },
+			);
+		}
+
+		if (
+			!ObjectIdUtil.isSameObjectId(payment.restaurant_id, restaurantObjectId) ||
+			!ObjectIdUtil.isSameObjectId(payment.order_id, orderObjectId)
+		) {
+			throw new NotFoundException(
+				ERROR_CODE.RESOURCE_NOT_FOUND,
+				'Payment not found',
+				{
+					payment_id: paymentObjectId.toString(),
+					order_id: orderObjectId.toString(),
+					restaurant_id: restaurantObjectId.toString(),
+				},
+			);
+		}
+
+		const response = this.toPaymentDetailItem(payment, includeGatewayResponse);
+		if (!includeGatewayResponse) {
+			await this.redis.set(cacheKey, JSON.stringify(response), 'EX', 300);
+		}
+
+		return response;
+	}
+
+	async processGatewayCallback(input: IGatewayWebhookInput): Promise<Record<string, unknown>> {
+		const paymentId = ObjectIdUtil.toObjectId(input.paymentId, 'paymentId');
+		const payment = await this.paymentRepository.findById(paymentId);
+
+		if (!payment) {
+			return {
+				ignored: true,
+				reason: 'Payment not found',
+			};
+		}
+
+		if (payment.status !== PaymentStatus.PENDING) {
+			return {
+				ignored: true,
+				reason: `Payment already processed in status ${payment.status}`,
+			};
+		}
+
+		if (
+			input.amount !== undefined &&
+			input.amount !== null &&
+			NumberUtil.round2(Number(input.amount)) !== NumberUtil.round2(Number(payment.amount ?? 0))
+		) {
+			await this.paymentRepository.update(paymentId, {
+				status: PaymentStatus.FAILED,
+				failed_reason: 'Amount mismatch',
+				gateway_response: input.gatewayResponse ?? null,
+			});
+
+			await this.invalidatePaymentCaches(payment.order_id, paymentId, false);
+			return {
+				ignored: true,
+				reason: 'Amount mismatch',
+			};
+		}
+
+		const session = await this.connection.startSession();
+		try {
+			await session.withTransaction(async () => {
+				const order = await this.orderRepository.findMutableByIdInRestaurant(
+					payment.restaurant_id,
+					payment.order_id,
+					{ session },
+				);
+
+				if (!order) {
+					await this.paymentRepository.update(
+						paymentId,
+						{
+							status: PaymentStatus.FAILED,
+							failed_reason: 'Order not found',
+							gateway_response: input.gatewayResponse ?? null,
+						},
+						session,
+					);
+					return;
+				}
+
+				const nextStatus =
+					input.resultCode === 0 ? PaymentStatus.COMPLETED : PaymentStatus.FAILED;
+				const updatedPayment = await this.paymentRepository.updateByIdInOrder(
+					payment.restaurant_id,
+					payment.order_id,
+					paymentId,
+					{
+						status: nextStatus,
+						reference_number:
+							nextStatus === PaymentStatus.COMPLETED
+								? StringUtil.normalizeNullableString(input.transId)
+								: payment.reference_number,
+						processed_at:
+							nextStatus === PaymentStatus.COMPLETED
+								? (payment.processed_at ?? new Date())
+								: payment.processed_at,
+						failed_reason:
+							nextStatus === PaymentStatus.FAILED
+								? StringUtil.normalizeNullableString(input.message) ?? 'Gateway rejected transaction'
+								: null,
+						gateway_response: input.gatewayResponse ?? null,
+					},
+					{ session },
+				);
+
+				if (!updatedPayment) {
+					throw new ConflictException(
+						ERROR_CODE.CONFLICT_ERROR,
+						'Failed to update payment from gateway callback',
+					);
+				}
+
+				if (nextStatus === PaymentStatus.COMPLETED) {
+					const settlement = await this.paymentRepository.aggregateSettlementByOrder(
+						payment.order_id,
+						{ session },
+					);
+
+					const nextOrderPaymentStatus = this.resolveOrderPaymentStatus(
+						settlement,
+						Number(order.total_amount ?? 0),
+					);
+
+					const nextOrderStatus =
+						nextOrderPaymentStatus === OrderPaymentStatus.REFUNDED &&
+						order.status === OrderStatus.COMPLETED
+							? OrderStatus.REFUNDED
+							: order.status;
+
+					const updatedOrder = await this.orderRepository.updatePaymentState(
+						payment.restaurant_id,
+						payment.order_id,
+						nextOrderPaymentStatus,
+						nextOrderStatus,
+						{ session },
+					);
+
+					if (!updatedOrder) {
+						throw new ConflictException(
+							ERROR_CODE.CONFLICT_ERROR,
+							'Failed to update order payment state from gateway callback',
+						);
+					}
+				}
+			});
+		} finally {
+			await session.endSession();
+		}
+
+		await this.invalidatePaymentCaches(payment.order_id, paymentId, false);
+		const refreshedPayment = await this.paymentRepository.findById(paymentId);
+		if (refreshedPayment) {
+			await this.cachePaymentDetail(refreshedPayment);
+		}
+
+		return {
+			payment_id: paymentId.toString(),
+			status: input.resultCode === 0 ? PaymentStatus.COMPLETED : PaymentStatus.FAILED,
+		};
+	}
+
+	async expirePendingPayments(referenceTime = new Date()): Promise<number> {
+		const pendingPayments = await this.paymentRepository.findAll({
+			status: PaymentStatus.PENDING,
+			expires_at: { $lt: referenceTime },
+		} as any);
+
+		if (pendingPayments.length === 0) return 0;
+
+		const paymentIds = pendingPayments.map((payment) => payment._id as Types.ObjectId);
+
+		const updatedCount = await this.paymentRepository.updateManyByIds(
+			paymentIds,
+			{
+				status: PaymentStatus.FAILED,
+				failed_reason: 'Hết hạn thanh toán',
+			}
+		);
+
+		const cachePromises = pendingPayments.map((payment) =>
+			this.invalidatePaymentCaches(payment.order_id, payment._id as Types.ObjectId, false),
+		);
+		await Promise.all(cachePromises);
+
+		return updatedCount;
 	}
 
 	private async createPaymentInternal(
@@ -357,12 +629,10 @@ export class PaymentService {
 			return this.resolveIdempotentResult(existing, input.restaurantId, input.orderId);
 		}
 
-		let transactionResult:
-			| {
-					createdPayment: PaymentDocument;
-					orderPaymentStatus: OrderPaymentStatus | null;
-			  }
-			| null = null;
+		let transactionResult:{
+			createdPayment: PaymentDocument;
+			orderPaymentStatus: OrderPaymentStatus | null;
+		} | null = null;
 
 		const session = await this.connection.startSession();
 		try {
@@ -565,6 +835,11 @@ export class PaymentService {
 			createdPayment,
 		);
 
+		await this.cachePaymentDetail(createdPayment);
+		if (createdPayment.status === PaymentStatus.PENDING) {
+			await this.cachePendingPayment(createdPayment, input.paymentUrl, input.qrCodeUrl);
+		}
+
 		return this.toCreatePaymentResponse(createdPayment, orderPaymentStatus, false);
 	}
 
@@ -681,6 +956,8 @@ export class PaymentService {
 		payment: PaymentDocument,
 		orderPaymentStatus?: OrderPaymentStatus | null,
 		idempotent = false,
+		paymentUrl?: string | null,
+		qrCodeUrl?: string | null,
 	): Record<string, unknown> {
 		return {
 			id: this.readEntityId(payment as any),
@@ -695,6 +972,8 @@ export class PaymentService {
 			processed_by: this.readValueAsString((payment as any).processed_by),
 			processed_at: payment.processed_at,
 			expires_at: (payment as any).expires_at ?? null,
+			payment_url: paymentUrl ?? null,
+			qr_code_url: qrCodeUrl ?? null,
 			order_payment_status: orderPaymentStatus ?? null,
 			created_at: (payment as any).created_at,
 			idempotent,
@@ -763,17 +1042,85 @@ export class PaymentService {
 		await this.redis.del(...keys);
 
 		if (setPendingCache && payment) {
-			await this.redis.set(
-				`${CACHE_PENDING_PAYMENT_PREFIX}${paymentId.toString()}`,
-				JSON.stringify({
-					amount: payment.amount,
-					payment_number: payment.payment_number,
-					expires_at: (payment as any).expires_at ?? null,
-				}),
-				'EX',
-				PAYMENT_PENDING_TTL_SECONDS,
-			);
+			await this.cachePendingPayment(payment);
 		}
+	}
+
+	private async cachePaymentDetail(payment: PaymentDocument): Promise<void> {
+		await this.redis.set(
+			`${CACHE_PAYMENT_PREFIX}${this.readEntityId(payment as any)}`,
+			JSON.stringify(payment),
+			'EX',
+			300,
+		);
+	}
+
+	private async cachePendingPayment(
+		payment: PaymentDocument,
+		paymentUrl: string | null = null,
+		qrCodeUrl: string | null = null,
+	): Promise<void> {
+		await this.redis.set(
+			`${CACHE_PENDING_PAYMENT_PREFIX}${this.readEntityId(payment as any)}`,
+			JSON.stringify({
+				amount: payment.amount,
+				payment_number: payment.payment_number,
+				expires_at: (payment as any).expires_at ?? null,
+				payment_url: paymentUrl,
+				qr_code_url: qrCodeUrl,
+			}),
+			'EX',
+			PAYMENT_PENDING_TTL_SECONDS,
+		);
+	}
+
+	private buildOrderPaymentSummary(
+		order: OrderDocument,
+		settlement: IPaymentSettlementSummary,
+	): Record<string, unknown> {
+		return {
+			net_paid: settlement.net_paid,
+			total_refunded: settlement.total_refunded,
+			remaining_amount: this.computeRemainingAmount(
+				Number(order.total_amount ?? 0),
+				settlement.net_paid,
+				settlement.pending_hold,
+			),
+			order_payment_status: this.resolveOrderPaymentStatus(
+				settlement,
+				Number(order.total_amount ?? 0),
+			),
+		};
+	}
+
+	private toPaymentListItem(payment: PaymentDocument): Record<string, unknown> {
+		return {
+			id: this.readEntityId(payment as any),
+			payment_number: payment.payment_number,
+			amount: payment.amount,
+			method: payment.method,
+			status: payment.status,
+			reference_number: payment.reference_number,
+			cash_tendered: (payment as any).cash_tendered ?? null,
+			change_amount: payment.change_amount,
+			refunded_amount: payment.refunded_amount,
+			processed_by: this.readValueAsString((payment as any).processed_by),
+			processed_at: payment.processed_at,
+			expires_at: (payment as any).expires_at ?? null,
+			created_at: (payment as any).created_at,
+		};
+	}
+
+	private toPaymentDetailItem(
+		payment: PaymentDocument,
+		includeGatewayResponse = false,
+	): Record<string, unknown> {
+		return {
+			...this.toPaymentListItem(payment),
+			refund_reason: payment.refund_reason,
+			refunded_at: payment.refunded_at,
+			gateway_response: includeGatewayResponse ? payment.gateway_response : null,
+		};
 	}
 
 	private readEntityId(entity: Record<string, unknown>): string {

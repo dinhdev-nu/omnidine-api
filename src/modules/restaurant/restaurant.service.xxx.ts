@@ -73,7 +73,7 @@ export class RestaurantService {
         // Get from cache
         const cacheKey = `${CACHE_RESTAURANT_SLUG_PREFIX}${slug}`;
         const raw = await this.redis.get(cacheKey);
-        if (raw !== null)  return { available: !!raw };
+        if (raw !== null)  return { available: false };
 
         // Get db 
         const restaurant = await this.restaurantRepository.getBySlug(slug);
@@ -109,14 +109,14 @@ export class RestaurantService {
                 throw new ConflictException(ERROR_CODE.CONFLICT_ERROR, 'Slug đã được sử dụng. Vui lòng chọn slug khác.');
             }
         } else {
-            Array.from({ length: 3 }).forEach(async (_, i: number) => {
-                const slug = await SlugUtil.slugify(dto.name, i > 1);
+            for (let i = 0; i < 3; i += 1) {
+                const slug = await SlugUtil.slugify(dto.name, i > 0);
                 const existing = await this.checkRestaurantSlug(slug);
                 if (existing.available) {
                     dto.slug = slug;
-                    return;
+                    break;
                 }
-            })
+            }
             if (!dto.slug) {
                 throw new ConflictException(ERROR_CODE.CONFLICT_ERROR, 'Không thể tạo slug tự động từ tên nhà hàng. Vui lòng cung cấp slug thủ công.');
             }
@@ -124,7 +124,7 @@ export class RestaurantService {
 
         const newRes = await this.restaurantRepository.create({
             ...dto,
-            owner_id: ownerId,
+            owner_id: new Types.ObjectId(ownerId),
             is_published: false,
             accepts_online_orders: false,
             currency: 'VND',
@@ -143,12 +143,14 @@ export class RestaurantService {
     async getRestaurantDetails(resId: Types.ObjectId, userId: Types.ObjectId) {
         
         const res = await this.handleGetResAndThrow(resId);
-        if (res.owner_id === userId) {
+        if (ObjectIdUtil.isSameObjectId(res.owner_id, userId)) {
             return res;
         }
 
+        const plain = res && typeof (res as any).toObject === 'function' ? (res as any).toObject() : res;
+
         return {
-            ...res.toObject(),
+            ...plain,
             tax_rate: undefined,
             service_charge_rate: undefined,
             settings: undefined,
@@ -197,13 +199,14 @@ export class RestaurantService {
         if (incr === 1) await this.redis.expire(rateLimitKey, RATE_LIMIT_UPDATE_TTL);
         if (incr > 30) throw new TooManyRequestException(ERROR_CODE.TOO_MANY_REQUESTS, 'Bạn đã cập nhật cài đặt tài chính quá nhiều lần trong hôm nay. Vui lòng thử lại sau.');
 
-        await this.handleGetResAndThrow(resId);
+        const res = await this.handleGetResAndThrow(resId);
         const data = ObjectUtil.removeNullFields(dto);
         await this.restaurantRepository.update(resId, data);
 
         // Invalidate cache
         const resCacheKey = `${CACHE_RESTAURANT_DETAILS_PREFIX}${resId}`;
-        await this.redis.del(resCacheKey);
+        const publicCacheKey = `${CACHE_RESTAURANT_PUBLIC_SLUG_PREFIX}${res.slug}`;
+        await this.redis.del(resCacheKey, publicCacheKey);
     }
 
     async updateRestaurantSettings(dto: UpdateRestaurantSettingsDto, resId: Types.ObjectId): Promise<{ updated: boolean, settings: Record<string, unknown> }> {
@@ -362,7 +365,7 @@ export class RestaurantService {
         const { page = 1, limit = 10, status } = pagination;
         const useCache = page === 1 && !status; // Chỉ sử dụng cache cho trang đầu tiên và khi không có filter status
         // Page 1
-        const cacheKey = `${CACHE_RESTAURANT_OWNER_LIST_PREFIX}${ownerId}:`;
+        const cacheKey = `${CACHE_RESTAURANT_OWNER_LIST_PREFIX}${ownerId}`;
         if (useCache) {
             const raw = await this.redis.get(cacheKey);
             if (raw) {
@@ -380,7 +383,7 @@ export class RestaurantService {
         const response = {
             data: resList.map(res => ObjectUtil.pick(
                 res, 
-                ['_id', 'name', 'slug', 'is_published', 'accepts_online_orders', 'logo_url'],
+                ['_id', 'name', 'email', 'phone', 'website', 'cuisine_type', 'city', 'operating_hours', 'slug', 'is_published', 'accepts_online_orders', 'logo_url'],
                 ['created_at']
             )),
             pagination: {

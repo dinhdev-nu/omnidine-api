@@ -203,8 +203,10 @@ export class StaffService {
 
         const includePermissions = Boolean(isPrivileged || isSelf);
 
+        const src = this.toPlainObject(staff);
+
         return ObjectUtil.omit(
-            staff.toObject(),
+            src,
             includePermissions ? [] : ["permissions"],
         );
     }

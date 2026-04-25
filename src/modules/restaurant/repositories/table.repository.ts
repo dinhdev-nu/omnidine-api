@@ -64,6 +64,12 @@ export interface ITableRepository extends IBaseRepository<TableDocument> {
         restaurantId: Types.ObjectId,
         tableId: Types.ObjectId,
         status: TableStatus,
+        options?: { session?: ClientSession },
+    ): Promise<TableDocument | null>;
+    occupyIfAvailable(
+        restaurantId: Types.ObjectId,
+        tableId: Types.ObjectId,
+        options?: { session?: ClientSession },
     ): Promise<TableDocument | null>;
     toggleActive(
         restaurantId: Types.ObjectId,
@@ -197,6 +203,7 @@ export class TableRepository
         restaurantId: Types.ObjectId,
         tableId: Types.ObjectId,
         status: TableStatus,
+        options?: { session?: ClientSession },
     ): Promise<TableDocument | null> {
         return this.tableModel
             .findOneAndUpdate(
@@ -207,7 +214,29 @@ export class TableRepository
                 {
                     $set: { status },
                 },
-                { new: true },
+                { new: true, session: options?.session ?? null },
+            )
+            .lean()
+            .exec() as Promise<TableDocument | null>;
+    }
+
+    async occupyIfAvailable(
+        restaurantId: Types.ObjectId,
+        tableId: Types.ObjectId,
+        options?: { session?: ClientSession },
+    ): Promise<TableDocument | null> {
+        return this.tableModel
+            .findOneAndUpdate(
+                {
+                    _id: tableId,
+                    restaurant_id: restaurantId,
+                    is_active: true,
+                    status: { $eq: TableStatus.AVAILABLE },
+                },
+                {
+                    $set: { status: TableStatus.OCCUPIED },
+                },
+                { new: true, session: options?.session ?? null },
             )
             .lean()
             .exec() as Promise<TableDocument | null>;

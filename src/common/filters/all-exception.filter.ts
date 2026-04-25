@@ -28,9 +28,10 @@ export class AllExceptionFilter implements ExceptionFilter {
             timestamp: new Date().toISOString()
         }
         console.error('Unhandled exception:', response)
+        const errorMeta: any = { correlationId, method: req.method, url: req.url, status, code: response.errorCode, stack: exception.stack };
         this.loggerService.error(
             exception.message || response.message,
-            { correlationId, method: req.method, url: req.url, status, code: response.errorCode, stack: exception.stack }
+            errorMeta
         );
         return res.status(status).json(response);
     }

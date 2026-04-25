@@ -22,6 +22,7 @@ export enum StaffStatus {
 export enum StaffPermissionKey {
   CAN_DISCOUNT        = 'can_discount',
   CAN_CANCEL_ORDER    = 'can_cancel_order',
+  CAN_PROCESS_PAYMENT = 'can_process_payment',
   CAN_REFUND          = 'can_refund',
   CAN_VIEW_REPORTS    = 'can_view_reports',
   CAN_MANAGE_TABLES   = 'can_manage_tables',
@@ -162,5 +163,3 @@ StaffSchema.index(
 );
 
 StaffSchema.index({ restaurant_id: 1, status: 1 });
-
-StaffSchema.index({ deleted_at: 1 });

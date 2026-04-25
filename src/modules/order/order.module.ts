@@ -18,6 +18,11 @@ import { Table, TableSchema } from '../restaurant/schemas/table.schema';
 import { SseModule } from '../sse/sse.module';
 import { AuthModule } from '../auth/auth.module';
 import { OptionalPublicUserInterceptor } from './interceptors/optional-public-user.interceptor';
+import {
+  RestaurantRepository,
+  TableRepository,
+} from '../restaurant/repositories';
+import { RestaurantModule } from '../restaurant/restaurant.module';
 
 @Module({
   controllers: [OrderController, TableOrderController, PublicOrderController],
@@ -28,9 +33,18 @@ import { OptionalPublicUserInterceptor } from './interceptors/optional-public-us
       provide: INJECTION_TOKEN.ORDER_REPOSITORY,
       useClass: OrderRepository,
     },
+    {
+      provide: INJECTION_TOKEN.RESTAURANT_REPOSITORY,
+      useClass: RestaurantRepository,
+    },
+    {
+      provide: INJECTION_TOKEN.TABLE_REPOSITORY,
+      useClass: TableRepository,
+    },
   ],
   imports: [
     AuthModule,
+    RestaurantModule,
     MongooseModule.forFeature([
       { name: Order.name, schema: OrderSchema },
       { name: MenuItem.name, schema: MenuItemSchema },

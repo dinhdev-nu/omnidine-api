@@ -81,8 +81,9 @@ implements IRestaurantRepository {
         const hasText = q && q.trim() !== '';
 
         const pipeline: PipelineStage[] = [];
-        const query: FilterQuery<RestaurantDocument> = { deleted_at: null, is_published: true, city: city };
+        const query: FilterQuery<RestaurantDocument> = { deleted_at: null, is_published: true };
 
+        if (city) query.city = city;
         if (cuisine_type) query.cuisine_type = cuisine_type;
         if (price_range && price_range.length > 0) query.price_range = { $in: price_range };
         if (accepts_online === true) query.accepts_online_orders = true;

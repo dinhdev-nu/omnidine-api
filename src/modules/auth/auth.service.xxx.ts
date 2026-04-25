@@ -15,6 +15,7 @@ import { JwtService } from "@nestjs/jwt";
 import { AppConfigService } from "src/config/config.service";
 import { ISessionRepository } from "./repositories/session.repository";
 import { TimeUtil } from "src/common/utils/time.util";
+import { ObjectIdUtil } from "src/common/utils/object-id.util";
 import { DeviceInfo, UserSessionDocument } from "./schema/user_session.xxx.schema";
 import { IOAuthProviderRepository } from "./repositories/oauth-provider.repository";
 import { InjectConnection } from "@nestjs/mongoose";
@@ -325,7 +326,7 @@ export class AuthService {
             throw new UnauthorizedException(ERROR_CODE.INVALID_CREDENTIALS, "Sai mật khẩu");
         }
 
-        await this.redis.del(FAIL_KEY);
+        await this.redis.del(FAIL_KEY, indentifierRateKey);
 
         // Check 2FA (nếu có) 
         if (user.two_factor_enabled) {
@@ -401,7 +402,7 @@ export class AuthService {
         let payload: RefreshTokenPayload;
         try {
             payload = this.jwt.verify(refresh_token, { secret: this.config.jwt.refreshSecret, algorithms: ['HS256'] });
-        } catch (err) {
+        } catch (err: any) {
               if (err.name === "TokenExpiredError") throw new UnauthorizedException(ERROR_CODE.TOKEN_EXPIRED, "Token hết hạn");
                 throw new UnauthorizedException(ERROR_CODE.UNAUTHORIZED, "Token không hợp lệ");
         }
@@ -469,7 +470,7 @@ export class AuthService {
 
         // Generate new token pair
         const { access_token, refresh_token: newRefreshToken } = await this.generateTokenPair(
-            new Types.ObjectId(payload.sub),
+            ObjectIdUtil.toObjectId(payload.sub, "sub"),
             payload.system_role,
             session.remember_me
         );
@@ -478,11 +479,11 @@ export class AuthService {
         const newTtl = session.remember_me ? this.config.jwt.refreshTtl : REFRESH_TTL_NOT_REMEMBER;
         
         // Update session in DB
-        const oldSession = await this.sessionRepository.updateSessionLogoutByTokenHash(newHash);
+        const oldSession = await this.sessionRepository.updateSessionLogoutByTokenHash(hash);
 
         // Create new session and update old session with transaction
         await this.sessionRepository.create({
-            user_id: new Types.ObjectId(payload.sub),
+            user_id: ObjectIdUtil.toObjectId(payload.sub, "sub"),
             expires_at: new Date(Date.now() + TimeUtil.parseTtlString(newTtl) * 1000),
             remember_me: session.remember_me,
             token_hash: newHash,
@@ -492,7 +493,7 @@ export class AuthService {
 
         // Update Redis
         const newSessionData: SessionData = {
-            user_id: new Types.ObjectId(payload.sub),
+            user_id: ObjectIdUtil.toObjectId(payload.sub, "sub"),
             system_role: payload.system_role,
             remember_me: session.remember_me
         }
@@ -555,7 +556,7 @@ export class AuthService {
             // Send OTP queue
             this.otpProducer.sendMailOTP({
                 email: pending.send_to,
-                userId: new Types.ObjectId(pending.user_id),
+                userId: ObjectIdUtil.toObjectId(pending.user_id, "user_id"),
                 otp,
                 ttl: OTP_EXPIRATION_TIME
             })
@@ -623,7 +624,9 @@ export class AuthService {
         ])
 
         // Create session
-        const user = await this.userRepository.findUserExistById(new Types.ObjectId(pending.user_id));
+        const user = await this.userRepository.findUserExistById(
+            ObjectIdUtil.toObjectId(pending.user_id, "user_id"),
+        );
         if (!user || user.status === 'banned') {
             throw new NotFoundException(ERROR_CODE.USER_NOT_FOUND,"User không tồn tại")
         }
@@ -654,12 +657,12 @@ export class AuthService {
     async logout(refresh_token: string, access_token_jti: string): Promise<{ logged_out: boolean }> {
 
         // Hash token
-        const hashRT = await HashUtil.hashWithSHA256(refresh_token);
-        const KEY_SESSION = `${SESSION_PREFIX}${hashRT}`;
+        const hash = await HashUtil.hashWithSHA256(refresh_token);
+        const KEY_SESSION = `${SESSION_PREFIX}${hash}`;
         const remainingTtl = await this.redis.ttl(KEY_SESSION);
 
         // Update session in DB
-        const session = await this.sessionRepository.updateSessionLogoutByTokenHash(hashRT);
+        const session = await this.sessionRepository.updateSessionLogoutByTokenHash(hash);
         if (!session) return { logged_out: false };
 
         // Remove session in Redis
@@ -686,7 +689,9 @@ export class AuthService {
         ]);
 
         // Del all sessions in Redis
-        const SESSION_KEYS = sessions.map(s => `${SESSION_PREFIX}${s.token_hash}`);
+        const SESSION_KEYS = sessions
+            .map((s) => (s.token_hash ? `${SESSION_PREFIX}${s.token_hash}` : null))
+            .filter((key): key is string => key !== null);
         if (SESSION_KEYS.length > 0) await this.redis.del(...SESSION_KEYS);
         return { logged_out_count: updateResult.modifiedCount };
     }
@@ -696,12 +701,18 @@ export class AuthService {
         current_refresh_token: string,
         current_access_token_jti: string,
     ): Promise<{ logged_out_count: number }> {
+        // Set blacklist for all current tokens
+        const hash = await HashUtil.hashWithSHA256(current_refresh_token);
+        const keySession = `${SESSION_PREFIX}${hash}`;
+        let remainingTtl = await this.redis.ttl(keySession);
+        if (remainingTtl <= 0) {
+            const currentSession = await this.sessionRepository.findSessionByTokenHash(hash);
+            if (currentSession?.expires_at) {
+                remainingTtl = Math.floor((new Date(currentSession.expires_at).getTime() - Date.now()) / 1000);
+            }
+        }
 
         const updateResult = await this.handleLogoutAllSessions(user_id);
-
-        // Set blacklist for all current tokens
-        const hashRT = await HashUtil.hashWithSHA256(current_refresh_token);
-        const remainingTtl = await this.redis.ttl(`${SESSION_PREFIX}${hashRT}`);
 
         if (current_access_token_jti && remainingTtl > 0) {
             const KEY_BLACKLIST = `${JWT_BLACKLIST_PREFIX}${current_access_token_jti}`;
@@ -799,7 +810,7 @@ export class AuthService {
         await this.redis.del(grantKey);
         
         const { user_id } = JSON.parse(rawGrant) as { user_id: string };
-        const userID = new Types.ObjectId(user_id);
+        const userID = ObjectIdUtil.toObjectId(user_id, "user_id");
 
         // Hash new password
         const hashedPassword = await HashUtil.hash(new_password);
@@ -832,7 +843,7 @@ export class AuthService {
         }
 
         // Get user
-        const user = await this.userRepository.findById(user_id);
+        const user = await this.userRepository.findUserExistById(user_id, true);
         if (!user) throw new NotFoundException(ERROR_CODE.USER_NOT_FOUND, "User không tồn tại")
 
         // Cho phép user có mật khẩu null (đăng nhập bằng Oauth) thiết lập mật khẩu mà không cần xác thực mật khẩu hiện tại
@@ -856,8 +867,12 @@ export class AuthService {
         await this.sessionRepository.UpdateSessionsExcludingTokenHash(user_id, hash);
 
         // Xoá session trong Redis
-        const SESSION_KEYS = sessions.map(s => `${SESSION_PREFIX}${s.token_hash}`);
-        await this.redis.del(...SESSION_KEYS);
+        const SESSION_KEYS = sessions
+            .map((s) => (s.token_hash ? `${SESSION_PREFIX}${s.token_hash}` : null))
+            .filter((key): key is string => key !== null);
+        if (SESSION_KEYS.length > 0) {
+            await this.redis.del(...SESSION_KEYS);
+        }
 
         return { changed: true }
     }
@@ -865,7 +880,7 @@ export class AuthService {
     // 2FA
     async enable2FA(user_id: Types.ObjectId, password: string): Promise<{ enabled: boolean}> {
         // Get user 
-        const user = await this.userRepository.findUserExistById(user_id);
+        const user = await this.userRepository.findUserExistById(user_id, true);
         if (!user) throw new NotFoundException(ERROR_CODE.USER_NOT_FOUND, "User không tồn tại")
         
         if (user.two_factor_enabled) return { enabled: true }
@@ -887,7 +902,7 @@ export class AuthService {
 
     async disable2FA(user_id: Types.ObjectId, password: string): Promise<{ disabled: boolean}> {
          // Get user 
-        const user = await this.userRepository.findUserExistById(user_id);
+        const user = await this.userRepository.findUserExistById(user_id, true);
         if (!user) throw new NotFoundException(ERROR_CODE.USER_NOT_FOUND, "User không tồn tại")
         
         if (!user.two_factor_enabled) return { disabled: true }
@@ -926,13 +941,14 @@ export class AuthService {
         access_token_jti: string
     ): Promise<{ revoked: boolean, isCurrentSession: boolean}> {
 
-        const session = await this.sessionRepository.findOne({
-            _id: session_id,
-            user_id,
-            is_revoked: false,
-        });
+        const session = await this.sessionRepository.findActiveSessionByIdAndUserId(session_id, user_id);
         if (!session) {
             throw new NotFoundException(ERROR_CODE.SESSION_NOT_FOUND, "Phiên đăng nhập không tồn tại")
+        }
+
+        let remainingTtl = await this.redis.ttl(`${SESSION_PREFIX}${session.token_hash}`);
+        if (remainingTtl <= 0) {
+            remainingTtl = Math.floor((new Date(session.expires_at).getTime() - Date.now()) / 1000);
         }
         
         await Promise.all([
@@ -941,11 +957,8 @@ export class AuthService {
         ])
 
         const isCurrentSession = await HashUtil.compareSha256(current_refresh_token, session.token_hash);
-        if (isCurrentSession && access_token_jti) {
-            const remainingTtl = await this.redis.ttl(`${SESSION_PREFIX}${session.token_hash}`);
-            if (remainingTtl > 0) {
-                await this.redis.set(`${JWT_BLACKLIST_PREFIX}${access_token_jti}`, '1', 'EX', remainingTtl);
-            }
+        if (isCurrentSession && access_token_jti && remainingTtl > 0) {
+            await this.redis.set(`${JWT_BLACKLIST_PREFIX}${access_token_jti}`, '1', 'EX', remainingTtl);
         }
             
         return { revoked: true, isCurrentSession }

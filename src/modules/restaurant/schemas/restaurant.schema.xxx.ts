@@ -120,7 +120,7 @@ export class Restaurant {
   @Prop({ type: Number, min: 0, max: 1, default: 0.1 })
   tax_rate: number;
 
-  @Prop({ type: Number, min: 0.01, max: 0.1, default: 0.01 })
+  @Prop({ type: Number, min: 0, max: 0.01, default: 0.01 })
   service_charge_rate: number;
 
   @Prop({ type: Boolean, default: false, index: true })

@@ -51,10 +51,10 @@ import { PermissionGuard } from './common/guards/permission.guard';
     HealthModule,
     SseModule,
     AuthModule,
-    RestaurantModule,
-    OrderModule,
     PaymentModule,
-
+    OrderModule,
+    RestaurantModule,
+    
     LoggerModule,
 
     RedisModule,

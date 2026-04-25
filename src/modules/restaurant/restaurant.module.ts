@@ -31,13 +31,13 @@ import { Table, TableSchema } from './schemas/table.schema';
 
 @Module({
   controllers: [
-    RestaurantController,
-    PublicRestaurantController,
     StaffController,
     MenuController,
     PublicMenuController,
     TableController,
     PublicTableController,
+    RestaurantController,
+    PublicRestaurantController,
   ],
   providers: [
     RestaurantService,
@@ -85,5 +85,6 @@ import { Table, TableSchema } from './schemas/table.schema';
       { name: User.name, schema: UserSchema },
     ]),
   ],
+  exports: [RestaurantService, StaffService],
 })
 export class RestaurantModule {}

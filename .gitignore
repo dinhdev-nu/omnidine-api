@@ -5,6 +5,8 @@
 
 docs/*.md
 /uploads
+.github
+/docs
 
 # Logs
 logs

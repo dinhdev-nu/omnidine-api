@@ -19,6 +19,6 @@ export class PaymentController {
   @Roles(ROLE.ADMIN, ROLE.USER)
   async paymentByQrCode(@Body() dto: CreatePaymentDto) {
     const restaurantId = dto.restaurantId;
-    return this.paymentService.paymentByQrCode(dto, restaurantId);
+    return this.paymentService.createNonCashPayment(dto, restaurantId);
   }
 }

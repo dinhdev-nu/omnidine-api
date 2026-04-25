@@ -8,6 +8,7 @@ export interface ISessionRepository extends IBaseRepository<UserSessionDocument>
     findSessionByTokenHash(token_hash: string): Promise<UserSessionDocument | null>;
     updateSessionLogoutByTokenHash(token_hash: string): Promise<UserSessionDocument | null>;
     findAllByUserId(user_id: Types.ObjectId): Promise<UserSessionDocument[]>;
+    findActiveSessionByIdAndUserId(session_id: Types.ObjectId, user_id: Types.ObjectId): Promise<UserSessionDocument | null>;
     updateSessionsLogoutByUserId(user_id: Types.ObjectId): Promise<{ modifiedCount: number }>;
     findSessionsExcludingTokenHash(user_id: Types.ObjectId, token_hash: string): Promise<UserSessionDocument[]>;
     UpdateSessionsExcludingTokenHash(user_id: Types.ObjectId, token_hash: string): Promise<{ modifiedCount: number }>;
@@ -31,7 +32,7 @@ export class SessionRepository
             token_hash: { $ne: token_hash },
             is_revoked: false,
             expires_at: { $gte: new Date() }
-        })
+        }).select('+token_hash').lean().exec();
     }
     
     async UpdateSessionsExcludingTokenHash(user_id: Types.ObjectId, token_hash: string): Promise<{ modifiedCount: number }> {
@@ -72,7 +73,19 @@ export class SessionRepository
                 is_revoked: false,
                 expires_at: { $gte: new Date() }
             },
-        ).lean().exec();
+        ).select('+token_hash').lean().exec();
+    }
+
+    async findActiveSessionByIdAndUserId(
+        session_id: Types.ObjectId,
+        user_id: Types.ObjectId,
+    ): Promise<UserSessionDocument | null> {
+        return this.sessionModel.findOne({
+            _id: session_id,
+            user_id,
+            is_revoked: false,
+            expires_at: { $gte: new Date() },
+        }).select('+token_hash').lean().exec();
     }
 
 

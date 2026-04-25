@@ -47,6 +47,11 @@ export interface IPaymentRepository extends IBaseRepository<PaymentDocument> {
     data: Partial<Payment>,
     options?: { session?: ClientSession },
   ): Promise<PaymentDocument | null>;
+  updateManyByIds(
+    ids: Types.ObjectId[],
+    data: Partial<Payment>,
+    options?: { session?: ClientSession },
+  ): Promise<number>;
 }
 
 @Injectable()
@@ -59,6 +64,20 @@ export class PaymentRepository
     private readonly paymentModel: Model<PaymentDocument>,
   ) {
     super(paymentModel);
+  }
+
+  async updateManyByIds(
+    ids: Types.ObjectId[],
+    data: Partial<Payment>,
+    options?: { session?: ClientSession },
+  ): Promise<number> {
+    const query = this.paymentModel.updateMany(
+      { _id: { $in: ids } },
+      { $set: data }
+    ).session(options?.session ?? null);
+
+    const result = await query.exec();
+    return result.modifiedCount;
   }
 
   async findByRestaurantAndIdempotencyKey(

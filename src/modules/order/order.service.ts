@@ -33,6 +33,9 @@ import {
 	IOrderRepository,
 } from "./repositories/order.repository";
 import {
+	ITableRepository,
+} from "../restaurant/repositories";
+import {
 	Order,
 	OrderDiscountType,
 	OrderDocument,
@@ -50,12 +53,11 @@ import {
 	MenuItemDocument,
 } from "../restaurant/schemas/menu-item.schema";
 import {
-	Table,
-	TableDocument,
 	TableStatus,
 } from "../restaurant/schemas/table.schema";
-import { RestaurantService } from "../restaurant/restaurant.service.xxx";
+import { RestaurantDocument } from "../restaurant/schemas/restaurant.schema.xxx";
 import { IPaginatedResult } from "src/common/interfaces/paginated-result.interface";
+import { RestaurantService } from "../restaurant/restaurant.service.xxx";
 
 type ActorRole = "owner" | "admin" | "staff";
 
@@ -96,6 +98,8 @@ const CACHE_ORDER_LIST_TTL_SECONDS = 60;
 const CACHE_ORDER_ACTIVE_PREFIX = "order:active:";
 const CACHE_ORDER_ACTIVE_TTL_SECONDS = 300;
 const CACHE_TABLE_PREFIX = "table:";
+const CACHE_RESTAURANT_DETAILS_PREFIX = "restaurant:details:";
+const CACHE_RESTAURANT_DETAILS_TTL_SECONDS = 3600;
 
 const RATE_LIMIT_ORDER_CREATE_PREFIX = "ratelimit:order:create:";
 const RATE_LIMIT_ORDER_CREATE_TTL_SECONDS = 60;
@@ -119,13 +123,13 @@ export class OrderService {
 		@InjectModel(MenuItem.name)
 		private readonly menuItemModel: Model<MenuItemDocument>,
 
-		private readonly restaurantService: RestaurantService,
-
-		@InjectModel(Table.name)
-		private readonly tableModel: Model<TableDocument>,
+		@Inject(INJECTION_TOKEN.TABLE_REPOSITORY)
+		private readonly tableRepository: ITableRepository,
 
 		@InjectConnection()
 		private readonly connection: Connection,
+
+		private readonly restaurantService: RestaurantService,
 
 		@Inject(INJECTION_TOKEN.REDIS_CLIENT)
 		private readonly redis: Redis,
@@ -164,20 +168,10 @@ export class OrderService {
 		const session = await this.connection.startSession();
 		try {
 			await session.withTransaction(async () => {
-				// No cache
 				if (isDineIn && tableId) {
-					const table = await this.tableModel.findOneAndUpdate(
-						{
-							_id: tableId,
-							restaurant_id: resId,
-							is_active: true,
-							status: { $eq: TableStatus.AVAILABLE }, // findOneAndUpdate is atomic
-						},
-						{
-							$set: { status: TableStatus.OCCUPIED },
-						}, 
-						{ new: true, session },
-					).lean().exec();
+					const table = await this.tableRepository.occupyIfAvailable(resId, tableId, {
+						session,
+					});
 					if (!table) {
 						throw new ConflictException(
 							ERROR_CODE.CONFLICT_ERROR,
@@ -273,18 +267,11 @@ export class OrderService {
 		try {
 			await session.withTransaction(async () => {
 				if (isDineIn && tableId) {
-					const table = await this.tableModel.findOneAndUpdate(
-						{
-							_id: tableId,
-							restaurant_id: restaurantId,
-							is_active: true,
-							status: { $eq: TableStatus.AVAILABLE }, // findOneAndUpdate is atomic
-						},
-						{
-							$set: { status: TableStatus.OCCUPIED },
-						},
-						{ new: true, session },
-					).lean().exec();
+					const table = await this.tableRepository.occupyIfAvailable(
+						restaurantId,
+						tableId,
+						{ session },
+					);
 					if (!table) {
 						throw new ConflictException(
 							ERROR_CODE.CONFLICT_ERROR,
@@ -466,13 +453,7 @@ export class OrderService {
 		resId: Types.ObjectId,
 		tableId: Types.ObjectId,
 	): Promise<{ order: Record<string, unknown> | null }> {
-		const table = await this.tableModel
-			.findOne({
-				_id: tableId,
-				restaurant_id: resId,
-			})
-			.lean()
-			.exec();
+		const table = await this.tableRepository.findByIdInRestaurant(resId, tableId);
 
 		if (!table) {
 			throw new NotFoundException(
@@ -816,18 +797,11 @@ export class OrderService {
 					order.order_type === OrderType.DINE_IN &&
 					order.table_id
 				) {
-					await this.tableModel.findOneAndUpdate(
-						{
-							_id: order.table_id,
-							restaurant_id: restaurantId,
-							is_active: true,
-							status: { $eq: TableStatus.AVAILABLE }, // findOneAndUpdate is atomic
-						},
-						{
-							$set: { status: TableStatus.OCCUPIED },
-						},
-						{ new: true, session },
-					).lean().exec();
+					await this.tableRepository.occupyIfAvailable(
+						restaurantId,
+						order.table_id,
+						{ session },
+					);
 
 					await this.redis.del(
 						`${CACHE_ORDER_ACTIVE_PREFIX}${order.table_id.toString()}`,
@@ -1054,16 +1028,12 @@ export class OrderService {
 						updated._id,
 					);
 					if (otherActive === 0) {
-						await this.tableModel.findOneAndUpdate(
-							{
-								_id: updated.table_id,
-								restaurant_id: restaurantId,
-							},
-							{
-								$set: { status: TableStatus.AVAILABLE },
-							},
+						await this.tableRepository.updateStatus(
+							restaurantId,
+							updated.table_id,
+							TableStatus.AVAILABLE,
 							{ session },
-						).lean().exec();
+						);
 					}
 					await this.redis.del(
 						`${CACHE_ORDER_ACTIVE_PREFIX}${updated.table_id.toString()}`,
@@ -1189,13 +1159,10 @@ export class OrderService {
 		restaurantId: Types.ObjectId,
 		tableId: Types.ObjectId,
 	): Promise<void> {
-		const table = await this.tableModel
-			.findOne({
-				_id: tableId,
-				restaurant_id: restaurantId,
-			})
-			.lean()
-			.exec();
+		const table = await this.tableRepository.findByIdInRestaurant(
+			restaurantId,
+			tableId,
+		);
 
 		if (!table) {
 			throw new NotFoundException(
