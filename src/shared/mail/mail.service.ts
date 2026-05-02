@@ -66,12 +66,19 @@ export class MailService {
     }
 
     private async getTemplate(templateName: string): Promise<string> {
-      const templateDir = path.join(__dirname, 'templates', templateName);
-      console.log('Looking for email template at:', templateDir);
-      if (!existsSync(templateDir)) {
-        console.error(`Email template "${templateName}" not found`);
+      const candidatePaths = [
+        path.join(__dirname, 'templates', templateName),
+        path.join(process.cwd(), 'dist', 'shared', 'mail', 'templates', templateName),
+        path.join(process.cwd(), 'src', 'shared', 'mail', 'templates', templateName),
+      ];
+
+      for (const templatePath of candidatePaths) {
+        if (existsSync(templatePath)) {
+          return readFileSync(templatePath, 'utf-8');
+        }
       }
 
-      return readFileSync(templateDir, 'utf-8');
+      const checkedPaths = candidatePaths.join(' | ');
+      throw new Error(`Email template "${templateName}" not found. Checked: ${checkedPaths}`);
    }
 }
