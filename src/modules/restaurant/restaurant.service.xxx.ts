@@ -129,7 +129,7 @@ export class RestaurantService {
             accepts_online_orders: false,
             currency: 'VND',
             tax_rate: 0.1,
-            service_charge_rate: 0.000,
+            service_charge_rate: 0.01,
             settings: {},
         })
 

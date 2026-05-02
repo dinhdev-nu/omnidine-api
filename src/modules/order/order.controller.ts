@@ -123,7 +123,7 @@ export class OrderController {
     @CurrentActor() actor: IActor,                           
   ) {
     return this.orderService.createPosOrder(
-      restaurantId,
+      restaurantId, 
       payload,
       actor
     );

@@ -19,6 +19,7 @@ import { SseModule } from '../sse/sse.module';
 import { AuthModule } from '../auth/auth.module';
 import { OptionalPublicUserInterceptor } from './interceptors/optional-public-user.interceptor';
 import {
+  MenuItemRepository,
   RestaurantRepository,
   TableRepository,
 } from '../restaurant/repositories';
@@ -41,6 +42,10 @@ import { RestaurantModule } from '../restaurant/restaurant.module';
       provide: INJECTION_TOKEN.TABLE_REPOSITORY,
       useClass: TableRepository,
     },
+    {
+      provide: INJECTION_TOKEN.MENU_ITEM_REPOSITORY,
+      useClass: MenuItemRepository,
+    }
   ],
   imports: [
     AuthModule,

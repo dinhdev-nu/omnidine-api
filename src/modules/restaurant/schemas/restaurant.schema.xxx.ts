@@ -44,7 +44,7 @@ export class Restaurant {
   @Prop({ type: Number, min: 1, max: 4, default: null })
   price_range: number | null;
 
-  @Prop({ type: String, default: null })
+  @Prop({ type: String, default: null }) 
   logo_url: string | null;
 
   @Prop({ type: String, default: null })

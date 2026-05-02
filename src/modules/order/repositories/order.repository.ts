@@ -111,6 +111,13 @@ export interface IOrderRepository extends IBaseRepository<OrderDocument> {
         notes?: string | null,
         options?: { session?: ClientSession },
     ): Promise<OrderDocument>;
+    updateItemStatus(
+        restaurantId: Types.ObjectId,
+        orderId: Types.ObjectId,
+        itemId: Types.ObjectId,
+        newStatus: OrderItemStatus,
+        options?: { session?: ClientSession },
+    ): Promise<OrderDocument>;
     cancelOrderItem(
         restaurantId: Types.ObjectId,
         orderId: Types.ObjectId,
@@ -162,11 +169,28 @@ export class OrderRepository
         super(orderModel);
     }
 
+    async updateItemStatus(restaurantId: Types.ObjectId, orderId: Types.ObjectId, itemId: Types.ObjectId, newStatus: OrderItemStatus, options?: { session?: ClientSession; }): Promise<OrderDocument> {
+        return await this.orderModel.findOneAndUpdate(
+            {
+                _id: orderId,
+                restaurant_id: restaurantId,
+                "items._id": itemId,
+                "items.status": { $in: Array.from(UPDATEABLE_ITEM_STATUSES) },
+            },
+            {
+                $set: {
+                    "items.$.status": newStatus,
+                },
+            },
+            { new: true, session: options?.session ?? null }
+        ).lean().exec() as OrderDocument;
+    }
+
     async countActiveOrderItems(restaurantId: Types.ObjectId, itemId: Types.ObjectId): Promise<number> {
         return this.orderModel.countDocuments({
             restaurant_id: restaurantId,
             "items.menu_item_id": itemId,
-            "items.status": { $in: UPDATEABLE_ITEM_STATUSES},
+            "items.status": { $in: Array.from(UPDATEABLE_ITEM_STATUSES) },
         }).exec();
     }
 
@@ -336,7 +360,7 @@ export class OrderRepository
             {
                 _id: orderId,
                 restaurant_id: restaurantId,
-                status: { $in: ADDABLE_STATUSES },
+                status: { $in: Array.from(ADDABLE_STATUSES) },
             },
             { 
                 $push: { items: { $each: newItems } }

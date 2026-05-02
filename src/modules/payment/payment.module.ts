@@ -1,17 +1,16 @@
 import { Module } from '@nestjs/common';
 import { PaymentService } from './payment.service';
-import { PaymentController } from './payment.controller';
+import { OrderPaymentsController } from './payment.controller';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Payment, PaymentSchema } from './schemas/payment.schema';
 import { SseModule } from '../sse/sse.module';
 import { INJECTION_TOKEN } from 'src/common/constants/injection-token.constant';
 import { PaymentRepository } from './repositories/payment.repository';
-import { OrderModule } from '../order/order.module';
 import { OrderRepository } from '../order/repositories/order.repository';
 import { Order, OrderSchema } from '../order/schemas/order.schema.xxx';
 
 @Module({
-  controllers: [PaymentController],
+  controllers: [OrderPaymentsController],
   providers: [
     PaymentService,
     {

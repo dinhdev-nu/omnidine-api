@@ -83,15 +83,6 @@ interface ICreatePaymentInput {
 	gatewayResponse?: Record<string, unknown> | null;
 }
 
-interface IGatewayWebhookInput {
-	paymentId: Types.ObjectId | string;
-	amount?: number | null;
-	resultCode: number;
-	transId?: string | null;
-	message?: string | null;
-	gatewayResponse?: Record<string, unknown> | null;
-}
-
 @Injectable()
 export class PaymentService {
 	constructor(
@@ -111,6 +102,8 @@ export class PaymentService {
 	async paymentByCash(
 		dto: CreatePaymentByCashDto,
 		restaurantId: Types.ObjectId | string,
+		orderId: Types.ObjectId | string,
+		actorId?: string | null,
 	): Promise<Record<string, unknown>> {
 		const method = dto.method;
 		if (method !== PaymentMethod.CASH) {
@@ -121,21 +114,21 @@ export class PaymentService {
 		}
 		
 		const restaurantObjectId = ObjectIdUtil.toObjectId(restaurantId, 'restaurantId');
-		const orderId = ObjectIdUtil.toObjectId(dto.orderId, 'orderId');
-		const amount = NumberUtil.round2(Number(dto.paidAmount ?? 0));
-		const cashTendered = NumberUtil.round2(Number(dto.cashTendered ?? 0));
+		const orderObjectId = ObjectIdUtil.toObjectId(orderId, 'orderId');
+		const amount = NumberUtil.round2(Number(dto.amount ?? 0));
+		const cashTendered = NumberUtil.round2(Number(dto.cash_tendered ?? 0));
 
 		return this.createPaymentInternal({
 			restaurantId: restaurantObjectId,
-			orderId,
+			orderId: orderObjectId,
 			method,
 			amount,
-			idempotencyKey: dto.idempotencyKey,
+			idempotencyKey: dto.idempotency_key,
 			cashTendered,
 			referenceNumber: null,
 			notes: dto.notes,
-			processedBy: dto.processedBy
-				? ObjectIdUtil.toObjectId(dto.processedBy, 'processedBy')
+			processedBy: actorId
+				? ObjectIdUtil.toObjectId(actorId, 'processedBy')
 				: null,
 		});
 	}
@@ -143,6 +136,8 @@ export class PaymentService {
 	async createNonCashPayment(
 		dto: CreatePaymentDto,
 		restaurantId: Types.ObjectId | string,
+		orderId: Types.ObjectId | string,
+		actorId?: string | null,
 	): Promise<Record<string, unknown>> {
 		const method = dto.method;
 		if (method === PaymentMethod.CASH) {
@@ -162,30 +157,35 @@ export class PaymentService {
 		}
 
 		const restaurantObjectId = ObjectIdUtil.toObjectId(restaurantId, 'restaurantId');
-		const orderId = ObjectIdUtil.toObjectId(dto.orderId, 'orderId');
+		const orderObjectId = ObjectIdUtil.toObjectId(orderId, 'orderId');
 		const amount = NumberUtil.round2(Number(dto.amount ?? 0));
 
 		return this.createPaymentInternal({
 			restaurantId: restaurantObjectId,
-			orderId,
+			orderId: orderObjectId,
 			method,
 			amount,
-			idempotencyKey: dto.idempotencyKey,
-			referenceNumber: dto.referenceNumber,
+			idempotencyKey: dto.idempotency_key,
+			referenceNumber:  null,
 			notes: dto.notes,
-			returnUrl: dto.returnUrl,
-			processedBy: dto.processedBy
-				? ObjectIdUtil.toObjectId(dto.processedBy, 'processedBy')
+			returnUrl: dto.return_url,
+			processedBy: actorId
+				? ObjectIdUtil.toObjectId(actorId, 'processedBy')
 				: null,
 		});
 	}
 
-	async refundPayment(dto: RefundPaymentDto): Promise<Record<string, unknown>> {
-		const restaurantId = ObjectIdUtil.toObjectId(dto.restaurantId, 'restaurantId');
-		const orderId = ObjectIdUtil.toObjectId(dto.orderId, 'orderId');
-		const paymentId = ObjectIdUtil.toObjectId(dto.paymentId, 'paymentId');
-		const refundAmount = NumberUtil.round2(Number(dto.refundAmount ?? 0));
-		const refundReason = StringUtil.normalizeNullableString(dto.refundReason);
+	async refundPayment(
+		resId: string,
+		orderId: string,
+		paymentId: string,
+		dto: RefundPaymentDto
+	): Promise<Record<string, unknown>> {
+		const resObjecId = ObjectIdUtil.toObjectId(resId, 'restaurantId');
+		const orderObjectId = ObjectIdUtil.toObjectId(orderId, 'orderId');
+		const paymentObjectId = ObjectIdUtil.toObjectId(paymentId, 'paymentId');
+		const refundAmount = NumberUtil.round2(Number(dto.refund_amount ?? 0));
+		const refundReason = StringUtil.normalizeNullableString(dto.refund_reason);
 
 		if (!refundReason) {
 			throw new BadRequestException(
@@ -194,7 +194,7 @@ export class PaymentService {
 			);
 		}
 
-		await this.checkRefundRateLimit(orderId);
+		await this.checkRefundRateLimit(orderObjectId);
 
 		let transactionResult:
 			| {
@@ -208,8 +208,8 @@ export class PaymentService {
 		try {
 			transactionResult = await session.withTransaction(async () => {
 				const order = await this.orderRepository.findMutableByIdInRestaurant(
-					restaurantId,
-					orderId,
+					resObjecId,
+					orderObjectId,
 					{ session },
 				);
 
@@ -217,14 +217,14 @@ export class PaymentService {
 					throw new NotFoundException(
 						ERROR_CODE.RESOURCE_NOT_FOUND,
 						'Order not found',
-						{ order_id: orderId.toString(), restaurant_id: restaurantId.toString() },
+						{ order_id: orderObjectId.toString(), restaurant_id: resObjecId.toString() },
 					);
 				}
 
 				const payment = await this.paymentRepository.findByIdInOrder(
-					restaurantId,
-					orderId,
-					paymentId,
+					resObjecId,
+					orderObjectId,
+					paymentObjectId,
 					{ session },
 				);
 
@@ -233,9 +233,9 @@ export class PaymentService {
 						ERROR_CODE.RESOURCE_NOT_FOUND,
 						'Payment not found',
 						{
-							payment_id: paymentId.toString(),
-							order_id: orderId.toString(),
-							restaurant_id: restaurantId.toString(),
+							payment_id: paymentObjectId.toString(),
+							order_id: orderObjectId.toString(),
+							restaurant_id: resObjecId.toString(),
 						},
 					);
 				}
@@ -275,9 +275,9 @@ export class PaymentService {
 						: PaymentStatus.PARTIALLY_REFUNDED;
 
 				const updatedPayment = await this.paymentRepository.updateByIdInOrder(
-					restaurantId,
-					orderId,
-					paymentId,
+					resObjecId,
+					orderObjectId,
+					paymentObjectId,
 					{
 						refunded_amount: nextRefundedAmount,
 						refund_reason: refundReason,
@@ -294,7 +294,7 @@ export class PaymentService {
 					);
 				}
 
-				const settlement = await this.paymentRepository.aggregateSettlementByOrder(orderId, {
+				const settlement = await this.paymentRepository.aggregateSettlementByOrder(orderObjectId, {
 					session,
 				});
 
@@ -310,8 +310,8 @@ export class PaymentService {
 						: order.status;
 
 				const updatedOrder = await this.orderRepository.updatePaymentState(
-					restaurantId,
-					orderId,
+					resObjecId,
+					orderObjectId,
 					nextOrderPaymentStatus,
 					nextOrderStatus,
 					{ session },
@@ -343,11 +343,11 @@ export class PaymentService {
 
 		const { updatedPayment, nextOrderStatus, nextOrderPaymentStatus } = transactionResult;
 
-		await this.invalidatePaymentCaches(orderId, paymentId, false);
+		await this.invalidatePaymentCaches(orderObjectId, paymentObjectId, false);
 		await this.cachePaymentDetail(updatedPayment);
 
 		return {
-			payment_id: paymentId.toString(),
+			payment_id: paymentObjectId.toString(),
 			refunded_amount: updatedPayment.refunded_amount,
 			payment_status: updatedPayment.status,
 			refunded_at: updatedPayment.refunded_at,
@@ -448,171 +448,6 @@ export class PaymentService {
 		}
 
 		return response;
-	}
-
-	async processGatewayCallback(input: IGatewayWebhookInput): Promise<Record<string, unknown>> {
-		const paymentId = ObjectIdUtil.toObjectId(input.paymentId, 'paymentId');
-		const payment = await this.paymentRepository.findById(paymentId);
-
-		if (!payment) {
-			return {
-				ignored: true,
-				reason: 'Payment not found',
-			};
-		}
-
-		if (payment.status !== PaymentStatus.PENDING) {
-			return {
-				ignored: true,
-				reason: `Payment already processed in status ${payment.status}`,
-			};
-		}
-
-		if (
-			input.amount !== undefined &&
-			input.amount !== null &&
-			NumberUtil.round2(Number(input.amount)) !== NumberUtil.round2(Number(payment.amount ?? 0))
-		) {
-			await this.paymentRepository.update(paymentId, {
-				status: PaymentStatus.FAILED,
-				failed_reason: 'Amount mismatch',
-				gateway_response: input.gatewayResponse ?? null,
-			});
-
-			await this.invalidatePaymentCaches(payment.order_id, paymentId, false);
-			return {
-				ignored: true,
-				reason: 'Amount mismatch',
-			};
-		}
-
-		const session = await this.connection.startSession();
-		try {
-			await session.withTransaction(async () => {
-				const order = await this.orderRepository.findMutableByIdInRestaurant(
-					payment.restaurant_id,
-					payment.order_id,
-					{ session },
-				);
-
-				if (!order) {
-					await this.paymentRepository.update(
-						paymentId,
-						{
-							status: PaymentStatus.FAILED,
-							failed_reason: 'Order not found',
-							gateway_response: input.gatewayResponse ?? null,
-						},
-						session,
-					);
-					return;
-				}
-
-				const nextStatus =
-					input.resultCode === 0 ? PaymentStatus.COMPLETED : PaymentStatus.FAILED;
-				const updatedPayment = await this.paymentRepository.updateByIdInOrder(
-					payment.restaurant_id,
-					payment.order_id,
-					paymentId,
-					{
-						status: nextStatus,
-						reference_number:
-							nextStatus === PaymentStatus.COMPLETED
-								? StringUtil.normalizeNullableString(input.transId)
-								: payment.reference_number,
-						processed_at:
-							nextStatus === PaymentStatus.COMPLETED
-								? (payment.processed_at ?? new Date())
-								: payment.processed_at,
-						failed_reason:
-							nextStatus === PaymentStatus.FAILED
-								? StringUtil.normalizeNullableString(input.message) ?? 'Gateway rejected transaction'
-								: null,
-						gateway_response: input.gatewayResponse ?? null,
-					},
-					{ session },
-				);
-
-				if (!updatedPayment) {
-					throw new ConflictException(
-						ERROR_CODE.CONFLICT_ERROR,
-						'Failed to update payment from gateway callback',
-					);
-				}
-
-				if (nextStatus === PaymentStatus.COMPLETED) {
-					const settlement = await this.paymentRepository.aggregateSettlementByOrder(
-						payment.order_id,
-						{ session },
-					);
-
-					const nextOrderPaymentStatus = this.resolveOrderPaymentStatus(
-						settlement,
-						Number(order.total_amount ?? 0),
-					);
-
-					const nextOrderStatus =
-						nextOrderPaymentStatus === OrderPaymentStatus.REFUNDED &&
-						order.status === OrderStatus.COMPLETED
-							? OrderStatus.REFUNDED
-							: order.status;
-
-					const updatedOrder = await this.orderRepository.updatePaymentState(
-						payment.restaurant_id,
-						payment.order_id,
-						nextOrderPaymentStatus,
-						nextOrderStatus,
-						{ session },
-					);
-
-					if (!updatedOrder) {
-						throw new ConflictException(
-							ERROR_CODE.CONFLICT_ERROR,
-							'Failed to update order payment state from gateway callback',
-						);
-					}
-				}
-			});
-		} finally {
-			await session.endSession();
-		}
-
-		await this.invalidatePaymentCaches(payment.order_id, paymentId, false);
-		const refreshedPayment = await this.paymentRepository.findById(paymentId);
-		if (refreshedPayment) {
-			await this.cachePaymentDetail(refreshedPayment);
-		}
-
-		return {
-			payment_id: paymentId.toString(),
-			status: input.resultCode === 0 ? PaymentStatus.COMPLETED : PaymentStatus.FAILED,
-		};
-	}
-
-	async expirePendingPayments(referenceTime = new Date()): Promise<number> {
-		const pendingPayments = await this.paymentRepository.findAll({
-			status: PaymentStatus.PENDING,
-			expires_at: { $lt: referenceTime },
-		} as any);
-
-		if (pendingPayments.length === 0) return 0;
-
-		const paymentIds = pendingPayments.map((payment) => payment._id as Types.ObjectId);
-
-		const updatedCount = await this.paymentRepository.updateManyByIds(
-			paymentIds,
-			{
-				status: PaymentStatus.FAILED,
-				failed_reason: 'Hết hạn thanh toán',
-			}
-		);
-
-		const cachePromises = pendingPayments.map((payment) =>
-			this.invalidatePaymentCaches(payment.order_id, payment._id as Types.ObjectId, false),
-		);
-		await Promise.all(cachePromises);
-
-		return updatedCount;
 	}
 
 	private async createPaymentInternal(

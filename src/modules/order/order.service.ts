@@ -1,6 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { InjectConnection, InjectModel } from "@nestjs/mongoose";
-import { Connection, Model, Types } from "mongoose";
+import { Connection, Types } from "mongoose";
 import Redis from "ioredis";
 import { ERROR_CODE } from "src/common/constants/error-code.constant";
 import { INJECTION_TOKEN } from "src/common/constants/injection-token.constant";
@@ -33,6 +33,7 @@ import {
 	IOrderRepository,
 } from "./repositories/order.repository";
 import {
+	IMenuItemRepository,
 	ITableRepository,
 } from "../restaurant/repositories";
 import {
@@ -49,13 +50,11 @@ import {
 	OrderItemStatus,
 } from "./schemas/order-item.schema.xxx";
 import {
-	MenuItem,
 	MenuItemDocument,
 } from "../restaurant/schemas/menu-item.schema";
 import {
 	TableStatus,
 } from "../restaurant/schemas/table.schema";
-import { RestaurantDocument } from "../restaurant/schemas/restaurant.schema.xxx";
 import { IPaginatedResult } from "src/common/interfaces/paginated-result.interface";
 import { RestaurantService } from "../restaurant/restaurant.service.xxx";
 
@@ -98,8 +97,7 @@ const CACHE_ORDER_LIST_TTL_SECONDS = 60;
 const CACHE_ORDER_ACTIVE_PREFIX = "order:active:";
 const CACHE_ORDER_ACTIVE_TTL_SECONDS = 300;
 const CACHE_TABLE_PREFIX = "table:";
-const CACHE_RESTAURANT_DETAILS_PREFIX = "restaurant:details:";
-const CACHE_RESTAURANT_DETAILS_TTL_SECONDS = 3600;
+const CACHE_TABLE_LIST_PREFIX = "table:list:";
 
 const RATE_LIMIT_ORDER_CREATE_PREFIX = "ratelimit:order:create:";
 const RATE_LIMIT_ORDER_CREATE_TTL_SECONDS = 60;
@@ -120,8 +118,8 @@ export class OrderService {
 		@Inject(INJECTION_TOKEN.ORDER_REPOSITORY)
 		private readonly orderRepository: IOrderRepository,
 
-		@InjectModel(MenuItem.name)
-		private readonly menuItemModel: Model<MenuItemDocument>,
+		@Inject(INJECTION_TOKEN.MENU_ITEM_REPOSITORY)
+		private readonly menuItemRepository: IMenuItemRepository,
 
 		@Inject(INJECTION_TOKEN.TABLE_REPOSITORY)
 		private readonly tableRepository: ITableRepository,
@@ -806,6 +804,7 @@ export class OrderService {
 					await this.redis.del(
 						`${CACHE_ORDER_ACTIVE_PREFIX}${order.table_id.toString()}`,
 						`${CACHE_TABLE_PREFIX}${order.table_id.toString()}`,
+						`${CACHE_TABLE_LIST_PREFIX}${restaurantId.toString()}`,
 					)
 				}
 				return updated;
@@ -849,6 +848,16 @@ export class OrderService {
 			);
 		}
 
+		if (order.status === OrderStatus.PENDING) {
+			if (payload.status !== OrderItemStatus.PREPARING && 
+				payload.status !== OrderItemStatus.CANCELLED) {
+				throw new BadRequestException(
+					ERROR_CODE.VALIDATION_ERROR,
+					`Cannot set item to ${payload.status} when order is PENDING`,
+				);
+			}
+		}
+
 		const item = this.findOrderItemOrThrow(order, itemId);
 		if (!this.isAllowedItemStatusTransition(item.status, payload.status, actor.role)) {
 			throw new ConflictException(
@@ -857,11 +866,12 @@ export class OrderService {
 			);
 		}
 
-		const updated = await this.orderRepository.updateOrderStatus(
+		const updated = await this.orderRepository.updateItemStatus(
 			restaurantId,
 			orderId,
-			order.status, // keep order status unchanged
-		)
+			itemId,
+			payload.status,
+		);
 		if (!updated) {
 			throw new ConflictException(
 				ERROR_CODE.CONFLICT_ERROR,
@@ -873,7 +883,7 @@ export class OrderService {
 
 		return {
 			item_id: (item as any)._id,
-			status: item.status,
+			status: payload.status,
 			updated_at: (updated as any).updated_at,
 		};
 	}
@@ -1222,20 +1232,12 @@ export class OrderService {
 			ObjectIdUtil.toObjectId(i.menu_item_id, "menu_item_id"),
 		);
 
-		const menuItems = await this.menuItemModel
-			.find({
-				_id: { $in: uniqueIds },
-				restaurant_id: restaurantId,
-				is_available: true,
-				deleted_at: null,
-			})
-			.select({ _id: 1, item_name: 1, base_price: 1 })
-			.lean()
-			.exec();
+		const menuItemsInDB = await this.menuItemRepository.getAvailableItemsByUniqueIdsInRestaurant(restaurantId, uniqueIds);
 
 		const menuMap = new Map<string, MenuItemDocument>();
-		for (const item of menuItems) {
-			menuMap.set(item._id.toString(), item as MenuItemDocument);
+		for (const item of menuItemsInDB) {
+			item._id
+			menuMap.set((item as any)._id.toString(), item as MenuItemDocument);
 		}
 
 		const snapshots: OrderItem[] = [];
@@ -1248,11 +1250,11 @@ export class OrderService {
 					`Menu item is not available: ${menuItemId.toString()}`,
 				);
 			}
-
+			
 			const unitPrice = menuItem.base_price;
 			snapshots.push({
 				menu_item_id: menuItemId,
-				item_name: (menuItem as any).name,
+				item_name: menuItem.name,
 				quantity: i.quantity,
 				unit_price: unitPrice,
 				total_price: NumberUtil.round2(unitPrice * i.quantity),
@@ -1547,6 +1549,7 @@ export class OrderService {
 			);
 
 			await this.redis.del(`${CACHE_TABLE_PREFIX}${tableId.toString()}`);
+			await this.redis.del(`${CACHE_TABLE_LIST_PREFIX}${resId.toString()}`);
 		}
 
 		await this.invalidateOrderListCacheByDate( resId, (order as any).created_at );

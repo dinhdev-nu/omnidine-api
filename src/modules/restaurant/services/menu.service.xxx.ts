@@ -344,7 +344,7 @@ export class MenuService {
 
         const created = await this.menuItemRepository.create({
             restaurant_id: resId,
-            category_id: category_id,
+            category_id: new Types.ObjectId(category_id),
             name: payload.name,
             description: payload.description ?? null,
             base_price: payload.base_price,
@@ -364,6 +364,7 @@ export class MenuService {
             include_item_category: true,
             include_categories: true,
         });
+        await this.invalidateSearchCaches(resId);
 
         return this.toPlainObject(created);
     }
@@ -467,6 +468,8 @@ export class MenuService {
         const current = await this.getItemOrThrow(resId, itemId);
         const currentCategoryId = current.category_id as Types.ObjectId; 
 
+        const isCategoryChanging = payload.category_id !== undefined && !ObjectIdUtil.isSameObjectId(payload.category_id, currentCategoryId);
+
         const data: IUpdateMenuItemPayload = {};
         let targetCategoryId = currentCategoryId;
 
@@ -506,11 +509,18 @@ export class MenuService {
         }
 
         // Invalidate caches
-        const menuItemCacheKey = `${CACHE_MENU_ITEM_PREFIX}${itemId.toString()}`;
-        const menuItemCatCacheKey = `${CACHE_MENU_ITEMS_PREFIX}${resId.toString()}:${currentCategoryId.toString()}`;
-        const menuItemTargetCatCacheKey = `${CACHE_MENU_ITEMS_PREFIX}${resId.toString()}:${targetCategoryId.toString()}`;
-        const menuPublic = `${CACHE_MENU_PUBLIC_PREFIX}${resId.toString()}`;
-        await this.redis.del(menuItemCacheKey, menuItemCatCacheKey, menuItemTargetCatCacheKey, menuPublic);
+        await this.invalidateItemCaches(resId, {
+            item_id: itemId,
+            category_id: currentCategoryId,
+            include_item_detail: true,
+            include_item_category: true,
+            include_categories: isCategoryChanging, // Nếu có đổi category thì mới invalidate cache list category
+        });
+        if (!ObjectIdUtil.isSameObjectId(currentCategoryId, targetCategoryId)) {
+            const targetCatCacheKey = `${CACHE_MENU_ITEMS_PREFIX}${resId.toString()}:${targetCategoryId.toString()}`;
+            await this.redis.del(targetCatCacheKey);
+        }
+        await this.invalidateSearchCaches(resId);
 
         return {
             updated: true,
@@ -556,6 +566,7 @@ export class MenuService {
             include_item_detail: true,
             include_item_category: true,
         });
+        await this.invalidateSearchCaches(resId);
 
         return {
             is_available: updated.is_available,
@@ -591,8 +602,10 @@ export class MenuService {
             item_id: itemId,
             category_id: categoryId,
             include_item_detail: true,
+            include_item_category: true,
             include_categories: false,
         });
+        await this.invalidateSearchCaches(resId);
 
         return {
             is_featured: updated.is_featured,
@@ -647,6 +660,7 @@ export class MenuService {
             include_item_category: true,
             include_categories: false,
         });
+        await this.invalidateSearchCaches(resId);
 
         const images = Array.isArray(updated.images) ? updated.images : [];
 
@@ -703,6 +717,7 @@ export class MenuService {
             include_item_detail: true,
             include_item_category: true,
         });
+        await this.invalidateSearchCaches(resId);
 
         const images = Array.isArray(updated.images) ? updated.images : [];
 
@@ -776,6 +791,7 @@ export class MenuService {
             include_item_category: true,
             include_item_detail: true,
         });
+        await this.invalidateSearchCaches(resId);
 
         return { deleted: true };
     }
@@ -784,7 +800,6 @@ export class MenuService {
         slug: string,
     ): Promise<Record<string, unknown>> {
         const restaurant = await this.restaurantService.getRestaurantDetailsBySlug(slug);
-        
         if (!restaurant) {
             throw new NotFoundException(
                 ERROR_CODE.RESOURCE_NOT_FOUND,
@@ -792,25 +807,21 @@ export class MenuService {
             );
         }
 
-        const restaurantId = ObjectIdUtil.toObjectId(
-            restaurant._id as Types.ObjectId | string,
-            "restaurant_id",
-        );
-        const publicCacheKey = `${CACHE_MENU_PUBLIC_PREFIX}${restaurantId.toString()}`;
+        const resId = ObjectIdUtil.toObjectId(restaurant._id as Types.ObjectId | string, "restaurant_id");
+
+        const publicCacheKey = `${CACHE_MENU_PUBLIC_PREFIX}${restaurant._id.toString()}`;
         const cached = await this.redis.get(publicCacheKey);
         if (cached) {
             return JSON.parse(cached) as Record<string, unknown>;
         }
 
-        const categories = await this.menuCategoryRepository.listByRestaurant(restaurantId);
+        const categories = await this.menuCategoryRepository.listByRestaurant(resId);
         const activeCategories = categories.filter((cat) => cat.is_active === true);
         const activeCategoryIds = activeCategories.map((cat) => ObjectIdUtil.toObjectId((cat as any)._id, "category_id"));
-
         const items = await this.menuItemRepository.listPublicAvailableByRestaurant(
-            restaurantId,
+            resId,
             activeCategoryIds,
         );
-
         const categoryRows = activeCategories.map((cat) => {
             return {
                 ...ObjectUtil.omit(this.toPlainObject(cat), ['_id', "restaurant_id", "sort_order", "__v"], ["created_at", "updated_at"]),
@@ -821,7 +832,7 @@ export class MenuService {
         })
 
         const response = {
-            restaurant: ObjectUtil.omit(restaurant, ["_id", 'owner_id', 'settings' , 'slug', "__v"], ["created_at", "updated_at"]),
+            restaurant: ObjectUtil.omit(restaurant, ['owner_id', 'settings', "__v"], ["created_at", "updated_at"]),
             categories: categoryRows,
         };
 
@@ -831,7 +842,6 @@ export class MenuService {
             "EX",
             CACHE_MENU_PUBLIC_TTL_SECONDS,
         );
-
         return response;
     }
 
@@ -1059,6 +1069,17 @@ export class MenuService {
 
         if (keys.size > 0) {
             await this.redis.del(...Array.from(keys));
+        }
+    }
+
+    private async invalidateSearchCaches(
+        restaurantId: Types.ObjectId,
+    ): Promise<void> {
+        // Xóa tất cả search cache cho restaurant này (key pattern: menu:search:resId:*)
+        const pattern = `${CACHE_MENU_ITEM_SEARCH_PREFIX}${restaurantId.toString()}:*`;
+        const keys = await this.redis.keys(pattern);
+        if (keys.length > 0) {
+            await this.redis.del(...keys);
         }
     }
 }

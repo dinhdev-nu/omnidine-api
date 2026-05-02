@@ -40,7 +40,11 @@ export class RestaurantAuthGuard implements CanActivate {
         if(!user) {
             throw new UnauthorizedException(ERROR_CODE.UNAUTHORIZED, "Vui lòng đăng nhập để tiếp tục");
         }
-
+        
+        const isObjId = Types.ObjectId.isValid(resId);
+        if(!isObjId) {
+            throw new ForbiddenException(ERROR_CODE.RESOURCE_NOT_FOUND, "Không tìm thấy nhà hàng");
+        }
         const res = await this.restaurantService.handleGetResAndThrow(new Types.ObjectId(resId));
 
         let role: RestaurantRole

@@ -63,7 +63,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
             const errorResponse: ApiErrorRessponse = {
                 success: false,
                 errorCode: ERROR_CODE.VALIDATION_ERROR,
-                message: 'Dư liệu đầu vào không hợp lệ',
+                message: response.message[0], // Chỉ lấy message của lỗi đầu tiên để trả về
                 details: response.message,
                 path: req.url,
                 correlationId,
@@ -74,7 +74,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
                 warnMeta1.stack = exception.stack;
             }
             this.loggerService.warn(
-                    exception.message,
+                    response.message,
                     warnMeta1,
             );
             return res.status(status).json(errorResponse);

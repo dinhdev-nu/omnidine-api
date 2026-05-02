@@ -59,7 +59,7 @@ implements IRestaurantRepository {
         const skip = (page - 1) * limit;
         return this.restaurantModel.find(filter)
             .sort({ created_at: -1 })
-            .skip(skip)
+            .skip(skip) 
             .limit(limit)
             .lean()
             .exec();

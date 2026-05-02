@@ -224,7 +224,6 @@ export class TableService {
         const table = await this.getTableOrThrow(resId, tableId);
 
         const oldQr = table.qr_code;
-        const oldTableNumber = table.table_number;
 
         const data: IUpdateTablePayload = {};
 
@@ -279,10 +278,16 @@ export class TableService {
         ];
 
         const changedTableNumber =
-            payload.table_number !== undefined &&
-            payload.table_number !== oldTableNumber;
+            data.table_number !== undefined &&
+            data.table_number !== table.table_number;
+        const changedName =
+            data.name !== undefined &&
+            data.name !== table.name;
+        const changedCapacity =
+            data.capacity !== undefined &&
+            data.capacity !== table.capacity;
 
-        if (oldQr && changedTableNumber) {
+        if (oldQr && (changedTableNumber || changedName || changedCapacity)) {
             keysToDelete.push(`${CACHE_TABLE_QR_PREFIX}${oldQr}`);
         }
 
@@ -422,7 +427,6 @@ export class TableService {
     async regenerateQrCode(
         resId: Types.ObjectId,
         tableId: Types.ObjectId,
-        publicBaseUrl?: string,
     ): Promise<Record<string, unknown>> {
         await this.checkQrRateLimit(resId);
 
@@ -464,16 +468,14 @@ export class TableService {
             CACHE_TABLE_QR_TTL_SECONDS,
         );
 
-        await this.redis.del(`${CACHE_TABLE_PREFIX}${tableId.toString()}`);
-
-        const qrUrl = publicBaseUrl
-            ? `${publicBaseUrl.replace(/\/$/, "")}/public/tables/${newQr}`
-            : `/public/tables/${newQr}`;
+        await this.redis.del(
+            `${CACHE_TABLE_PREFIX}${tableId.toString()}`,
+            `${CACHE_TABLE_LIST_PREFIX}${resId.toString()}`,
+        );
 
         return {
             table_id: updated._id.toString(),
             qr_code: newQr,
-            qr_url: qrUrl,
             updated_at: updated.updated_at,
         };
     }
@@ -542,7 +544,7 @@ export class TableService {
             name: qrTable.name,
             capacity: qrTable.capacity,
             status: qrTable.status,
-            restaurant: ObjectUtil.pick(restaurant, ['id', "name", "slug", "logo_url"]),
+            restaurant: ObjectUtil.omit(restaurant, ['owner_id', 'settings', "__v"], ["created_at", "updated_at"]),
             menu_url: `/public/restaurants/${restaurant.slug}/menu`,
         };
     }

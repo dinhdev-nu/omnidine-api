@@ -579,6 +579,8 @@ export class StaffService {
             id: this.readEntityId(src),
             employee_code: src.employee_code,
             full_name: src.full_name,
+            email: src.email,
+            phone: src.phone,
             position: src.position,
             status: src.status,
             hire_date: src.hire_date,

@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { MenuItem, MenuItemSchema } from './schemas/menu-item.schema';
 import { MenuCategory, MenuCategorySchema } from './schemas/menu-category.schema';
-import { MenuService, RestaurantService, StaffService, TableService } from './services';
+import { MenuService, PosService, RestaurantService, StaffService, TableService } from './services';
 import { INJECTION_TOKEN } from 'src/common/constants/injection-token.constant';
 import { AuthModule } from '../auth/auth.module';
 import {
@@ -22,6 +22,7 @@ import {
   RestaurantController,
   StaffController,
   TableController,
+  PosController,
 } from './controllers';
 import { OrderRepository } from '../order/repositories/order.repository';
 import { Order, OrderSchema } from '../order/schemas/order.schema.xxx';
@@ -38,12 +39,14 @@ import { Table, TableSchema } from './schemas/table.schema';
     PublicTableController,
     RestaurantController,
     PublicRestaurantController,
+    PosController,
   ],
   providers: [
     RestaurantService,
     StaffService,
     MenuService,
     TableService,
+    PosService,
     {
       provide: INJECTION_TOKEN.STAFF_REPOSITORY,
       useClass: StaffRepository,

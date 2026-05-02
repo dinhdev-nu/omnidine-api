@@ -338,8 +338,7 @@ export class TableController {
     ) {
         return this.tableService.regenerateQrCode(
             restaurantId,
-            tableId,
-            this.resolvePublicBaseUrl(req),
+            tableId
         );
     }
 
@@ -377,15 +376,6 @@ export class TableController {
         @Param("table_id", ParseObjectIdPipe) tableId: Types.ObjectId,
     ) {
         return this.tableService.deleteTable(restaurantId, tableId);
-    }
-
-    private resolvePublicBaseUrl(req: Request): string | undefined {
-        const host = req.get("host");
-        if (!host) return undefined;
-
-        const forwardedProto = req.get("x-forwarded-proto")?.split(",")[0]?.trim();
-        const protocol = forwardedProto || req.protocol || "http";
-        return `${protocol}://${host}`;
     }
 }
 

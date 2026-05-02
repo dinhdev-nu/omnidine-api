@@ -158,8 +158,8 @@ StaffSchema.index(
 );
 
 StaffSchema.index(
-  { restaurant_id: 1, user_id: 1 },
+  { restaurant_id: 1, user_id: 1 }, 
   { unique: true },
 );
-
+ 
 StaffSchema.index({ restaurant_id: 1, status: 1 });

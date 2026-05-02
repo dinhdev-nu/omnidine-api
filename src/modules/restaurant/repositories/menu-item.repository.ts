@@ -104,6 +104,10 @@ export interface IMenuItemRepository extends IBaseRepository<MenuItemDocument> {
         restaurantId: Types.ObjectId,
         categoryIds: Types.ObjectId[],
     ): Promise<MenuItemDocument[]>;
+    getAvailableItemsByUniqueIdsInRestaurant(
+        restaurantId: Types.ObjectId,
+        itemIds: Types.ObjectId[],
+    ): Promise<MenuItemDocument[]>;
     searchPublicAvailableByRestaurant(
         restaurantId: Types.ObjectId,
         query: string,
@@ -129,6 +133,18 @@ export class MenuItemRepository
             restaurant_id: restaurantId,
             deleted_at: null,
         };
+    }
+
+    async getAvailableItemsByUniqueIdsInRestaurant(restaurantId: Types.ObjectId, itemIds: Types.ObjectId[]): Promise<MenuItemDocument[]> {
+        if (!itemIds.length) return [];
+        return this.menuItemModel.find({
+            restaurant_id: restaurantId,
+            _id: { $in: itemIds },
+            deleted_at: null,
+            is_available: true,
+        })
+        .select({ _id: 1, name: 1, base_price: 1 })
+        .lean().exec() as Promise<MenuItemDocument[]>;
     }
 
     async countByCategory(

@@ -42,8 +42,8 @@ export class MenuCategory {
     type: String,
     default: null,
     validate: {
-      validator: (v: string) =>
-        /^https:\/\/.+\.(jpg|jpeg|png|webp)(\?.*)?$/i.test(v),
+      validator: (v: string | null) =>
+        v == null || /^https:\/\/.+\.(jpg|jpeg|png|webp)(\?.*)?$/i.test(v),
       message: 'imageUrl phải là HTTPS và có extension jpg/jpeg/png/webp',
     },
   })
