@@ -7,7 +7,8 @@ export const ERROR_CODE = {
     OTP_NOT_FOUND: "NOTFOUND_001",       // OTP hết hạn / chưa được gửi
     TEMP_TOKEN_NOT_FOUND: "NOTFOUND_002", // temp_token / session_token hết hạn
     SESSION_NOT_FOUND: "NOTFOUND_003",    // Phiên đăng nhập không tồn tại
-
+    RESTAURANT_NOT_FOUND: "NOTFOUND_004",  // Không tìm thấy nhà hàng
+    
     // USER
     USER_NOT_FOUND: "USER_001",
     USER_EXISTS: "USER_002",
@@ -35,6 +36,7 @@ export const ERROR_CODE = {
     DUPLICATE_ITEMS: "VALIDATION_004",
     INVALID_IP_ADDRESS: "VALIDATION_005",
     INVALID_PROVIDER: "VALIDATION_006",
+    INVALID_SLUG_FORMAT: "VALIDATION_007",
 
     // CONFLICT
     CONFLICT_ERROR: "CONFLICT_001",
@@ -53,6 +55,11 @@ export const ERROR_CODE = {
 
     // COMMON
     COMMON_ERROR: "COMMON_001",
+
+    UPLOAD_ERROR: "UPLOAD_001",
+    UPLOAD_FILE_TYPE_NOT_ALLOWED: "UPLOAD_002",
+    DELETE_ERROR: "DELETE_001",
+    UPLOAD_FILE_TOO_LARGE: "UPLOAD_003",
 
     // INTERNAL
     INTERNAL_ERROR: "INTERNAL_001",

@@ -7,4 +7,5 @@ export { default as oauth2Config, IOAuth2Config } from './oauth2.config';
 export { default as logConfig, ILogConfig } from './log.config';
 export { default as mailConfig, IMailConfig } from './mail.config';
 export { default as throttlerConfig, IThrottlerConfig } from './throrrler.config';
+export { default as uploadConfig, IUploadConfig } from './upload.config';
 

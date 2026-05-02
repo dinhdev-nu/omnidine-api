@@ -2,6 +2,7 @@ import { Body, Controller, Get, Patch } from "@nestjs/common";
 import {
     ApiTags, ApiOperation, ApiBearerAuth,
     ApiOkResponse,
+    ApiBody,
 } from "@nestjs/swagger";
 import { Types } from "mongoose";
 import { CurrentUser } from "src/common/decorators";
@@ -80,6 +81,29 @@ export class UserController {
         @Body() dto: UpdateUserProfileDTO
     ) {
         return this.userService.updateUserProfile(userId, dto)
+    }
+
+    @ApiOperation({ summary: 'Update user avatar' })
+    @ApiBody({
+        description: 'Provide the new avatar URL in the "avatar_url" field.',
+        schema: {
+            type: 'object',
+            required: ['avatar_url'],
+            properties: {
+                avatar_url: { type: 'string', format: 'uri', example: 'https://res.cloudinary.com/demo/image/upload/v1312461204/sample.jpg' },
+            },
+        },
+    })
+    @ApiOkResponse({
+        description: 'Avatar updated successfully',
+        schema: swWrap({ type: 'object', properties: { updated: { type: 'boolean', example: true }, user: { type: 'object', properties: USER_SCHEMA } } }),
+    })
+    @Patch("/me/avatar")
+    async updateAvatar(
+        @CurrentUser('sub') userId: Types.ObjectId,
+        @Body('avatar_url') avatarUrl: string
+    ) {
+        return this.userService.updateAvatar(userId, avatarUrl)
     }
 
     @ApiOperation({

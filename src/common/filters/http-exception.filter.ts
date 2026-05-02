@@ -5,13 +5,17 @@ import { ERROR_CODE } from "../constants/error-code.constant";
 import { CORRELATION_ID_HEADER } from "../middlewares/correlation-id.middleware";
 import { AppLoggerService } from "../../logger/logger.service";
 import { ApiErrorRessponse } from "../interfaces/api-response.interface";
+import { AppConfigService } from "src/config/config.service";
 
 
 
 @Catch(HttpException) // Bắt tất cả các lỗi HttpException
 export class HttpExceptionFilter implements ExceptionFilter {
 
-    constructor(private readonly loggerService: AppLoggerService) {}
+    constructor(
+        private readonly loggerService: AppLoggerService,
+        private readonly config: AppConfigService
+    ) {}
 
     catch(exception: HttpException, host: ArgumentsHost) {
         const ctx = host.switchToHttp();
@@ -38,9 +42,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
                     { correlationId, method: req.method, url: req.url, status, code: exception.errorCode, stack: exception.stack }
                 );
             } else {
+                const warnMeta: any = { correlationId, method: req.method, url: req.url, status, code: exception.errorCode };
+                if (!this.config.isProduction) {
+                    warnMeta.stack = exception.stack;
+                }
                 this.loggerService.warn(
                     exception.message,
-                    { correlationId, method: req.method, url: req.url, status, code: exception.errorCode }
+                    warnMeta
                 );
             }
             return res.status(status).json(errResponse);
@@ -55,15 +63,19 @@ export class HttpExceptionFilter implements ExceptionFilter {
             const errorResponse: ApiErrorRessponse = {
                 success: false,
                 errorCode: ERROR_CODE.VALIDATION_ERROR,
-                message: 'Dư liệu đầu vào không hợp lệ',
+                message: response.message[0], // Chỉ lấy message của lỗi đầu tiên để trả về
                 details: response.message,
                 path: req.url,
                 correlationId,
                 timestamp: new Date().toISOString()
             };
+            const warnMeta1: any = { correlationId, method: req.method, url: req.url, status, code: errorResponse.errorCode };
+            if (!this.config.isProduction) {
+                warnMeta1.stack = exception.stack;
+            }
             this.loggerService.warn(
-                exception.message, 
-                { correlationId, method: req.method, url: req.url, status, code: errorResponse.errorCode }
+                    response.message,
+                    warnMeta1,
             );
             return res.status(status).json(errorResponse);
         }
@@ -79,9 +91,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
                 correlationId,
                 timestamp: new Date().toISOString()
             };
+            const warnMeta2: any = { correlationId, method: req.method, url: req.url, status, code: errorResponse.errorCode };
+            if (!this.config.isProduction) {
+                warnMeta2.stack = exception.stack;
+            }
             this.loggerService.warn(
                 exception.message, 
-                { correlationId, method: req.method, url: req.url, status, code: errorResponse.errorCode }
+                warnMeta2
             );
             return res.status(status).json(errorResponse);
         }
@@ -103,9 +119,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
                 { correlationId, method: req.method, url: req.url, status, code: errResponse.errorCode, stack: exception.stack }
             );
         } else {
+            const warnMeta3: any = { correlationId, method: req.method, url: req.url, status, code: errResponse.errorCode };
+            if (!this.config.isProduction) {
+                warnMeta3.stack = exception.stack;
+            }
             this.loggerService.warn(
                 exception.message || 'An error occurred',
-                { correlationId, method: req.method, url: req.url, status, code: errResponse.errorCode }
+                warnMeta3
             );
         }
         return res.status(status).json(errResponse);

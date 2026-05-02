@@ -1,58 +1,104 @@
-import { IsDate, IsEmail, IsEnum, IsMongoId, IsNumber, IsOptional, IsPhoneNumber, IsString, Min } from "class-validator";
-import { Shift } from "../schemas/staff.schema";
-import { Type } from "class-transformer";
-import { ROLE, Role, ROLE_LIST } from "src/common/constants/role.constant";
-
+import {
+    IsDateString,
+    IsEmail,
+    IsEnum,
+    IsOptional,
+    IsString,
+    IsUrl,
+    IsPhoneNumber,
+    Matches,
+    MaxLength,
+    MinLength,
+} from "class-validator";
+import { StaffPosition, StaffStatus } from "../schemas/staff.schema.xxx";
+import { Transform } from "class-transformer";
+import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 
 export class CreateStaffDto {
 
-    @IsOptional() // Case staff chưa có tk
-    @IsMongoId({ message: 'ID người dùng không hợp lệ' })
+    @ApiProperty({
+        example: "NV001",
+        description: "Mã nhân viên duy nhất trong phạm vi nhà hàng",
+        type: String,
+        minLength: 1,
+        maxLength: 30,
+    })
     @IsString()
-    userId: string;
+    @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
+    @MinLength(1)
+    @MaxLength(30)
+    employee_code: string;
 
-    @IsMongoId({ message: 'ID nhà hàng không hợp lệ' })
+    @ApiProperty({
+        example: "Nguyen Van A",
+        description: "Họ và tên đầy đủ của nhân viên",
+        type: String,
+        minLength: 1,
+        maxLength: 150,
+    })
     @IsString()
-    restaurantId: string;
+    @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
+    @MinLength(1)
+    @MaxLength(150)
+    full_name: string;
 
-    @IsString()
-    name: string;
+    @ApiProperty({
+        enum: StaffPosition,
+        example: StaffPosition.WAITER,
+        description: "Vị trí công việc của nhân viên",
+    })
+    @IsEnum(StaffPosition, { message: "position phải là một vị trí hợp lệ" })
+    position: StaffPosition;
 
-    @IsString()
-    @IsEmail({}, { message: 'Email không hợp lệ' })
-    email: string;
+    @ApiProperty({
+        example: "2025-12-01",
+        description: "Ngày bắt đầu làm việc, định dạng ISO 8601",
+        type: String,
+        format: "date",
+    })
+    @IsDateString({}, { message: "hire_date phải là một chuỗi ngày tháng hợp lệ" })
+    hire_date: string;
 
-    @IsString()
-    @IsPhoneNumber('VN', { message: 'Số điện thoại không hợp lệ' })
-    phone: string;
-
+    @ApiPropertyOptional({
+        example: "+84901234567",
+        description: "Số điện thoại nhân viên (chuẩn VN)",
+        type: String,
+        maxLength: 20,
+    })
     @IsOptional()
     @IsString()
-    avatar?: string;
+    @MaxLength(20)
+    @IsPhoneNumber("VN", { message: "phone phải là một số điện thoại hợp lệ của Việt Nam" })
+    phone?: string;
 
-    @IsEnum(ROLE_LIST, { message: 'Vai trò nhân viên không hợp lệ' })
-    role: Role;
+    @ApiPropertyOptional({
+        example: "staff@restaurant.vn",
+        description: "Email liên hệ của nhân viên",
+        type: String,
+    })
+    @IsOptional()
+    @IsEmail({}, { message: "email phải là một địa chỉ email hợp lệ" })
+    email?: string;
 
-    @IsEnum(Shift, { message: 'Ca làm việc không hợp lệ' })
-    shift: Shift;
+    @ApiPropertyOptional({
+        enum: StaffStatus,
+        example: StaffStatus.ACTIVE,
+        description: "Trạng thái làm việc của nhân viên",
+    })
+    @IsOptional()
+    @IsEnum(StaffStatus, { message: "trạng thái không hợp lệ" })
+    status?: StaffStatus;
 
-    @IsString()
-    workingHours: string;
-
-    @IsNumber()
-    @Min(0, { message: 'Lương phải lớn hơn hoặc bằng 0' })
-    salary: number;
-
-    @Type(() => Date)
-    @IsDate({ message: 'Ngày tham gia không hợp lệ' })
-    joinDate: Date;
-
+    @ApiPropertyOptional({
+        example: "https://res.cloudinary.com/demo/image/upload/v1/staff/avatar.webp",
+        description: "Đường dẫn ảnh đại diện của nhân viên",
+        type: String,
+    })
     @IsOptional()
     @IsString()
-    address?: string;
-
-    @IsOptional()
-    @IsString()
-    notes?: string;
-
+    @IsUrl({}, { message: "avatar_url phải là một URL hợp lệ" })
+    @Matches(/\.(jpg|jpeg|png|webp)$/i, {
+        message: "URL phải trỏ đến một định dạng ảnh hợp lệ (jpg, png, webp...)",
+    })
+    avatar_url?: string;
 }

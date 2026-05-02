@@ -8,7 +8,7 @@ export interface IUserRepository extends IBaseRepository<UserDocument> {
     findUserExistByEmail(email: string): Promise<UserDocument | null>;
     findUserExistByPhone(phone: string): Promise<UserDocument | null>;
     findUserPendingByEmail(email: string): Promise<UserDocument | null>;
-    findUserExistById(id: Types.ObjectId): Promise<UserDocument | null>;
+    findUserExistById(id: Types.ObjectId, includePassword?: boolean): Promise<UserDocument | null>;
     getUserPendingDocumentByEmail(email: string): Promise<UserDocument | null>;
     getUserProfileById(id: Types.ObjectId): Promise<UserDocument | null>;
     updateUserProfile(id: Types.ObjectId, data: Partial<UserDocument>): Promise<UserDocument | null>;
@@ -76,9 +76,10 @@ export class UserRepository
             .exec();
     }
 
-    async findUserExistById(id: Types.ObjectId): Promise<UserDocument | null> {
+    async findUserExistById(id: Types.ObjectId, includePassword: boolean = false): Promise<UserDocument | null> {
+        const selectFields = includePassword ? '+password_hash' : '-deleted_at -__v -last_login_ip';
         return this.model.findOne({ _id: id, deleted_at: null })
-            .select('+password_hash')
+            .select(selectFields)
             .lean()
             .exec();
     }

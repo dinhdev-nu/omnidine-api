@@ -9,6 +9,8 @@ import Redis from "ioredis";
 
 
 const RATE_LIMIT_PROFILE_UPDATE = "ratelimit:profile:update:"
+const RATE_LIMIT_AVATAR_UPLOAD = "ratelimit:avatar:upload:"
+const RATE_LIMIT_AVATAR_UPLOAD_TTL_SECONDS = 3600
 
 @Injectable()
 export class UserService {
@@ -31,6 +33,23 @@ export class UserService {
         }
 
         return user;
+    }
+
+    async updateAvatar(userId: Types.ObjectId, avatarUrl: string): Promise<boolean> {
+        const icr = await this.redis.incr(`${RATE_LIMIT_AVATAR_UPLOAD}${userId.toString()}`);
+        if (icr === 1) await this.redis.expire(`${RATE_LIMIT_AVATAR_UPLOAD}${userId.toString()}`, RATE_LIMIT_AVATAR_UPLOAD_TTL_SECONDS); // Reset sau 60s
+        if (icr > 5) {
+            throw new TooManyRequestException(
+                ERROR_CODE.TOO_MANY_REQUESTS,
+                'Bạn đã thực hiện quá nhiều yêu cầu tải lên avatar. Vui lòng thử lại sau.'
+            );
+        }
+
+        // Cập nhật avatar
+        const updatedUser = await this.userRepository.updateUserProfile(userId, {
+            avatar_url: avatarUrl
+        });
+        return !!updatedUser;
     }
 
     async updateUserProfile(userId: Types.ObjectId, dto: UpdateUserProfileDTO) {
