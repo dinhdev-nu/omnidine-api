@@ -4,7 +4,7 @@ import { AppLoggerService } from '../../logger/logger.service';
 import { Request } from 'express';
 import { CORRELATION_ID_HEADER } from '../middlewares/correlation-id.middleware';
 import { USER_PAYLOAD } from '../guards/jwt-auth.guard';
-import { AccessTokenPayload } from 'src/modules/auth/auth.service.xxx';
+import { AccessTokenPayload } from 'src/modules/auth/auth.service';
 
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {

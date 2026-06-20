@@ -1,5 +1,5 @@
 import { SetMetadata } from "@nestjs/common";
-import { StaffPermissionKey } from "src/modules/restaurant/schemas/staff.schema.xxx";
+import { StaffPermissionKey } from "src/modules/restaurant/staff/schemas/staff.schema";
 
 
 export const REQUIRE_PERMISSION_KEY = "requirePermission";

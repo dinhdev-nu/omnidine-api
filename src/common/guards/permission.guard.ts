@@ -6,7 +6,7 @@ import { RESTAURANT_ROLE_INJECT, STAFF_INJECT } from "./restaurant-auth.guard";
 import { ForbiddenException } from "../exceptions";
 import { ERROR_CODE } from "../constants/error-code.constant";
 import { Request } from "express";
-import { StaffPermissionKey } from "src/modules/restaurant/schemas/staff.schema.xxx";
+import { StaffPermissionKey } from "src/modules/restaurant/staff/schemas/staff.schema";
 
 @Injectable()
 export class PermissionGuard implements CanActivate {

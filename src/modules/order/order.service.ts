@@ -32,10 +32,8 @@ import {
 	IOrderListFilters,
 	IOrderRepository,
 } from "./repositories/order.repository";
-import {
-	IMenuItemRepository,
-	ITableRepository,
-} from "../restaurant/repositories";
+import { IMenuItemRepository } from "../restaurant/menu/repositories/menu-item.repository";
+import { ITableRepository } from "../restaurant/table/repositories/table.repository";
 import {
 	Order,
 	OrderDiscountType,
@@ -44,19 +42,19 @@ import {
 	OrderSource,
 	OrderStatus,
 	OrderType,
-} from "./schemas/order.schema.xxx";
+} from "./schemas/order.schema";
 import {
 	OrderItem,
 	OrderItemStatus,
-} from "./schemas/order-item.schema.xxx";
+} from "./schemas/order-item.schema";
 import {
 	MenuItemDocument,
-} from "../restaurant/schemas/menu-item.schema";
+} from "../restaurant/menu/schemas/menu-item.schema";
 import {
 	TableStatus,
-} from "../restaurant/schemas/table.schema";
+} from "../restaurant/table/schemas/table.schema";
 import { IPaginatedResult } from "src/common/interfaces/paginated-result.interface";
-import { RestaurantService } from "../restaurant/restaurant.service.xxx";
+import { RestaurantService } from "../restaurant/restaurant.service";
 
 type ActorRole = "owner" | "admin" | "staff";
 

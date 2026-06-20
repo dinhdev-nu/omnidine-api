@@ -8,21 +8,19 @@ import {
 import { MongooseModule } from '@nestjs/mongoose';
 import { INJECTION_TOKEN } from 'src/common/constants/injection-token.constant';
 import { OrderRepository } from './repositories/order.repository';
-import { Order, OrderSchema } from './schemas/order.schema.xxx';
-import { MenuItem, MenuItemSchema } from '../restaurant/schemas/menu-item.schema';
+import { Order, OrderSchema } from './schemas/order.schema';
+import { MenuItem, MenuItemSchema } from '../restaurant/menu/schemas/menu-item.schema';
 import {
   Restaurant,
   RestaurantSchema,
-} from '../restaurant/schemas/restaurant.schema.xxx';
-import { Table, TableSchema } from '../restaurant/schemas/table.schema';
+} from '../restaurant/schemas/restaurant.schema';
+import { Table, TableSchema } from '../restaurant/table/schemas/table.schema';
 import { SseModule } from '../sse/sse.module';
 import { AuthModule } from '../auth/auth.module';
 import { OptionalPublicUserInterceptor } from './interceptors/optional-public-user.interceptor';
-import {
-  MenuItemRepository,
-  RestaurantRepository,
-  TableRepository,
-} from '../restaurant/repositories';
+import { MenuItemRepository } from '../restaurant/menu/repositories/menu-item.repository';
+import { RestaurantRepository } from '../restaurant/repositories/restaurant.repository';
+import { TableRepository } from '../restaurant/table/repositories/table.repository';
 import { RestaurantModule } from '../restaurant/restaurant.module';
 
 @Module({

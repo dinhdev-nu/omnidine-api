@@ -39,7 +39,7 @@ import {
   ThrottleCustom,
 } from 'src/common/decorators';
 import { ParseObjectIdPipe } from 'src/common/pipes/parse-id.pipe';
-import { StaffPermissionKey } from '../restaurant/schemas/staff.schema.xxx';
+import { StaffPermissionKey } from '../restaurant/staff/schemas/staff.schema';
 import {
   ActiveOrderByTableResponseDto,
   AddOrderItemsDto,
@@ -70,7 +70,7 @@ import {
   OrderSource,
   OrderStatus,
   OrderType,
-} from './schemas/order.schema.xxx';
+} from './schemas/order.schema';
 import { swWrap } from 'src/common/swagger/api-response.util';
 
 @ApiTags('orders')

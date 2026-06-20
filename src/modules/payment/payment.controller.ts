@@ -17,7 +17,7 @@ import {
 import { RequirePermission, RequireRestaurant, Roles } from 'src/common/decorators';
 import { ROLE } from 'src/common/constants/role.constant';
 import { PaymentMethod } from './schemas/payment.schema';
-import { StaffPermissionKey } from '../restaurant/schemas/staff.schema.xxx';
+import { StaffPermissionKey } from '../restaurant/staff/schemas/staff.schema';
 import { CurrentActor } from 'src/common/decorators/user/current-actor.decorator';
 
 /**

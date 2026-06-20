@@ -4,7 +4,7 @@ import { Role } from '../constants/role.constant';
 import { IS_PUBLIC_KEY, ROLES_KEY } from '../decorators';
 import { ForbiddenException, UnauthorizedException } from '../exceptions';
 import { ERROR_CODE } from '../constants/error-code.constant';
-import { AccessTokenPayload } from 'src/modules/auth/auth.service.xxx';
+import { AccessTokenPayload } from 'src/modules/auth/auth.service';
 import { USER_PAYLOAD } from './jwt-auth.guard';
 import { Request } from 'express';
 

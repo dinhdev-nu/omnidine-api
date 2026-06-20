@@ -1,5 +1,5 @@
-import { OAuthProvider, OAuthProviderDocument } from "../schema/oauth_provider.xxx.schema";
-import { BaseRepository, IBaseRepository } from "../../../common/repositories/base.repositories";
+import { OAuthProvider, OAuthProviderDocument } from "../schemas/oauth-provider.schema";
+import { BaseRepository, IBaseRepository } from "../../../common/repositories/base.repository";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";

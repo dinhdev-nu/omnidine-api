@@ -15,7 +15,7 @@ import { AppConfigService } from "src/config/config.service";
 import {
     AccessTokenPayload,
     JWT_BLACKLIST_PREFIX,
-} from "src/modules/auth/auth.service.xxx";
+} from "src/modules/auth/auth.service";
 import { USER_PAYLOAD } from "src/common/guards/jwt-auth.guard";
 
 @Injectable()

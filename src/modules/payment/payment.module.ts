@@ -7,7 +7,7 @@ import { SseModule } from '../sse/sse.module';
 import { INJECTION_TOKEN } from 'src/common/constants/injection-token.constant';
 import { PaymentRepository } from './repositories/payment.repository';
 import { OrderRepository } from '../order/repositories/order.repository';
-import { Order, OrderSchema } from '../order/schemas/order.schema.xxx';
+import { Order, OrderSchema } from '../order/schemas/order.schema';
 
 @Module({
   controllers: [OrderPaymentsController],

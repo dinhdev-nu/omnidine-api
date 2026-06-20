@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ClientSession, FilterQuery, Model, Types } from 'mongoose';
-import { BaseRepository, IBaseRepository } from 'src/common/repositories/base.repositories';
+import { BaseRepository, IBaseRepository } from 'src/common/repositories/base.repository';
 import {
   Payment,
   PaymentDocument,

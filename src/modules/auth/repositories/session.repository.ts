@@ -1,5 +1,5 @@
-import { BaseRepository, IBaseRepository } from "src/common/repositories/base.repositories";
-import { UserSession, UserSessionDocument } from "../schema/user_session.xxx.schema";
+import { BaseRepository, IBaseRepository } from "src/common/repositories/base.repository";
+import { UserSession, UserSessionDocument } from "../schemas/user-session.schema";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";

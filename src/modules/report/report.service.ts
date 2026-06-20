@@ -1,8 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { DailySaleStats, DailySaleStatsDocument } from './schemas/daily_sale_stats.schema';
+import { DailySaleStats, DailySaleStatsDocument } from './schemas/daily-sale-stats.schema';
 import { Model, Types } from 'mongoose';
-import { MonthlySaleStats, MonthlySaleStatsDocument } from './schemas/monthly_sale_stats.schema';
+import { MonthlySaleStats, MonthlySaleStatsDocument } from './schemas/monthly-sale-stats.schema';
 import Redis from 'ioredis';
 import { INJECTION_TOKEN } from 'src/common/constants/injection-token.constant';
 

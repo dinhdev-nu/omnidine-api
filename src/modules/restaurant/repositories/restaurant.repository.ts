@@ -1,5 +1,5 @@
-import { BaseRepository, IBaseRepository } from "src/common/repositories/base.repositories";
-import { RestaurantDocument, Restaurant } from "../schemas/restaurant.schema.xxx";
+import { BaseRepository, IBaseRepository } from "src/common/repositories/base.repository";
+import { RestaurantDocument, Restaurant } from "../schemas/restaurant.schema";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { FilterQuery, Model, PipelineStage, Types } from "mongoose";
