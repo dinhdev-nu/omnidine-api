@@ -5,11 +5,12 @@ import { Request } from "express";
 import { ForbiddenException, UnauthorizedException } from "../exceptions";
 import { ERROR_CODE } from "../constants/error-code.constant";
 import { USER_PAYLOAD } from "./jwt-auth.guard";
-import { AccessTokenPayload } from "src/modules/auth/auth.service.xxx";
-import { RestaurantService, StaffService } from "src/modules/restaurant/services";
+import { AccessTokenPayload } from "src/modules/auth/auth.service";
+import { RestaurantService } from "src/modules/restaurant/restaurant.service";
+import { StaffService } from "src/modules/restaurant/staff/staff.service";
 import { Types } from "mongoose";
 import { RestaurantRole } from "../constants/restaurant-role.constant";
-import { ObjectUtil } from "../utils/object.ultil";
+import { ObjectUtil } from "../utils/object.util";
 
 export const RESTAURANT_ROLE_INJECT = "x-restaurant-role";
 export const STAFF_INJECT = "x-restaurant-staff";

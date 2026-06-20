@@ -39,7 +39,7 @@ import {
 	OrderDocument,
 	OrderPaymentStatus,
 	OrderStatus,
-} from '../order/schemas/order.schema.xxx';
+} from '../order/schemas/order.schema';
 import { IOrderRepository } from '../order/repositories/order.repository';
 
 const PAYMENT_CREATE_ALLOWED_ORDER_STATUSES = new Set<OrderStatus>([

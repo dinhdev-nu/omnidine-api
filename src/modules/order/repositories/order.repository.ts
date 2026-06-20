@@ -1,9 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { ClientSession, FilterQuery, Model, Types, UpdateQuery } from "mongoose";
-import { BaseRepository, IBaseRepository } from "src/common/repositories/base.repositories";
-import { Order, OrderDocument, OrderPaymentStatus, OrderStatus, OrderType, OrderSource } from "../schemas/order.schema.xxx";
-import { OrderItem, OrderItemStatus } from "../schemas/order-item.schema.xxx";
+import { BaseRepository, IBaseRepository } from "src/common/repositories/base.repository";
+import { Order, OrderDocument, OrderPaymentStatus, OrderStatus, OrderType, OrderSource } from "../schemas/order.schema";
+import { OrderItem, OrderItemStatus } from "../schemas/order-item.schema";
 
 const TERMINAL_ORDER_STATUSES = [
     OrderStatus.COMPLETED,

@@ -1,7 +1,7 @@
 import { createParamDecorator, ExecutionContext } from "@nestjs/common";
 import { Request } from "express";
 import { USER_PAYLOAD } from "src/common/guards/jwt-auth.guard";
-import { AccessTokenPayload } from "src/modules/auth/auth.service.xxx"
+import { AccessTokenPayload } from "src/modules/auth/auth.service"
 
 
 type UserParamKey = keyof AccessTokenPayload;

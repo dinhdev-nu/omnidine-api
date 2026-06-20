@@ -29,8 +29,8 @@ import {
     OrderSource,
     OrderStatus,
     OrderType,
-} from "../schemas/order.schema.xxx";
-import { OrderItemStatus } from "../schemas/order-item.schema.xxx";
+} from "../schemas/order.schema";
+import { OrderItemStatus } from "../schemas/order-item.schema";
 
 const PUBLIC_ORDER_TYPES = [
     OrderType.DINE_IN,

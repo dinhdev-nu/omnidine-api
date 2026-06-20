@@ -1,4 +1,4 @@
-import { ObjectUtil } from "src/common/utils/object.ultil";
+import { ObjectUtil } from "src/common/utils/object.util";
 
 const obj = {
     a: 1,

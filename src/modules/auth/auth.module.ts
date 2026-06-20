@@ -2,17 +2,17 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { JwtModule } from '@nestjs/jwt';
 import { MailModule } from '../../shared/mail/mail.module';
-import { User, UserSchema } from './schema/user.xxx.schema';
-import { UserSession, UserSessionSchema } from './schema/user_session.xxx.schema';
-import { AuthController } from './auth.controller.xxx';
-import { AuthService } from './auth.service.xxx';
-import { OAuthProvider, OAuthProviderSchema } from './schema/oauth_provider.xxx.schema';
+import { User, UserSchema } from './schemas/user.schema';
+import { UserSession, UserSessionSchema } from './schemas/user-session.schema';
+import { AuthController } from './auth.controller';
+import { AuthService } from './auth.service';
+import { OAuthProvider, OAuthProviderSchema } from './schemas/oauth-provider.schema';
 import { INJECTION_TOKEN } from 'src/common/constants/injection-token.constant';
 import { UserRepository } from './repositories/user.repository';
 import { SessionRepository } from './repositories/session.repository';
 import { OAuthProviderRepository } from './repositories/oauth-provider.repository';
-import { UserController } from './user.controler.xxx';
-import { UserService } from './user.service.xxx';
+import { UserController } from './user.controller';
+import { UserService } from './user.service';
 
 @Module({
 
@@ -43,7 +43,7 @@ import { UserService } from './user.service.xxx';
       useClass: OAuthProviderRepository
     }
   ],
-  exports: [AuthService, JwtModule]
+  exports: [AuthService, JwtModule, INJECTION_TOKEN.USER_REPOSITORY]
 })
 export class AuthModule {}
    

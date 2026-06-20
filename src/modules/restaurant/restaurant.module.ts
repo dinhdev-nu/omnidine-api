@@ -1,68 +1,21 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { MenuItem, MenuItemSchema } from './schemas/menu-item.schema';
-import { MenuCategory, MenuCategorySchema } from './schemas/menu-category.schema';
-import { MenuService, PosService, RestaurantService, StaffService, TableService } from './services';
 import { INJECTION_TOKEN } from 'src/common/constants/injection-token.constant';
-import { AuthModule } from '../auth/auth.module';
-import {
-  MenuCategoryRepository,
-  MenuItemRepository,
-  RestaurantRepository,
-  StaffRepository,
-  TableRepository,
-} from './repositories';
-import { UserRepository } from '../auth/repositories/user.repository';
-import { Staff, StaffSchema } from './schemas/staff.schema.xxx';
-import {
-  MenuController,
-  PublicMenuController,
-  PublicRestaurantController,
-  PublicTableController,
-  RestaurantController,
-  StaffController,
-  TableController,
-  PosController,
-} from './controllers';
+import { PublicRestaurantController, RestaurantController } from './restaurant.controller';
+import { RestaurantService } from './restaurant.service';
+import { RestaurantRepository } from './repositories/restaurant.repository';
 import { OrderRepository } from '../order/repositories/order.repository';
-import { Order, OrderSchema } from '../order/schemas/order.schema.xxx';
-import { Restaurant, RestaurantSchema } from './schemas/restaurant.schema.xxx';
-import { User, UserSchema } from '../auth/schema/user.xxx.schema';
-import { Table, TableSchema } from './schemas/table.schema';
+import { Order, OrderSchema } from '../order/schemas/order.schema';
+import { Restaurant, RestaurantSchema } from './schemas/restaurant.schema';
+import { MenuModule } from './menu/menu.module';
+import { StaffModule } from './staff/staff.module';
+import { TableModule } from './table/table.module';
+import { PosModule } from './pos/pos.module';
 
 @Module({
-  controllers: [
-    StaffController,
-    MenuController,
-    PublicMenuController,
-    TableController,
-    PublicTableController,
-    RestaurantController,
-    PublicRestaurantController,
-    PosController,
-  ],
+  controllers: [RestaurantController, PublicRestaurantController],
   providers: [
     RestaurantService,
-    StaffService,
-    MenuService,
-    TableService,
-    PosService,
-    {
-      provide: INJECTION_TOKEN.STAFF_REPOSITORY,
-      useClass: StaffRepository,
-    },
-    {
-      provide: INJECTION_TOKEN.MENU_CATEGORY_REPOSITORY,
-      useClass: MenuCategoryRepository,
-    },
-    {
-      provide: INJECTION_TOKEN.MENU_ITEM_REPOSITORY,
-      useClass: MenuItemRepository,
-    },
-    {
-      provide: INJECTION_TOKEN.TABLE_REPOSITORY,
-      useClass: TableRepository,
-    },
     {
       provide: INJECTION_TOKEN.ORDER_REPOSITORY,
       useClass: OrderRepository,
@@ -71,23 +24,21 @@ import { Table, TableSchema } from './schemas/table.schema';
       provide: INJECTION_TOKEN.RESTAURANT_REPOSITORY,
       useClass: RestaurantRepository,
     },
-    {
-      provide: INJECTION_TOKEN.USER_REPOSITORY,
-      useClass: UserRepository,
-    }
   ],
   imports: [
-    AuthModule,
+    forwardRef(() => MenuModule),
+    StaffModule,
+    forwardRef(() => TableModule),
+    forwardRef(() => PosModule),
     MongooseModule.forFeature([
-      { name: MenuItem.name, schema: MenuItemSchema },
-      { name: MenuCategory.name, schema: MenuCategorySchema },
-      { name: Staff.name, schema: StaffSchema },
-      { name: Table.name, schema: TableSchema },
       { name: Order.name, schema: OrderSchema },
       { name: Restaurant.name, schema: RestaurantSchema },
-      { name: User.name, schema: UserSchema },
     ]),
   ],
-  exports: [RestaurantService, StaffService],
+  exports: [
+    RestaurantService,
+    INJECTION_TOKEN.RESTAURANT_REPOSITORY,
+    StaffModule,
+  ],
 })
 export class RestaurantModule {}

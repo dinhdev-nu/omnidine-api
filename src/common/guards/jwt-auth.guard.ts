@@ -8,7 +8,7 @@ import { UnauthorizedException } from '../exceptions';
 import { ERROR_CODE } from '../constants/error-code.constant';
 import { AppConfigService } from 'src/config/config.service';
 import { Request } from 'express';
-import { AccessTokenPayload, JWT_BLACKLIST_PREFIX } from 'src/modules/auth/auth.service.xxx';
+import { AccessTokenPayload, JWT_BLACKLIST_PREFIX } from 'src/modules/auth/auth.service';
 
 export const AUTHORIZATION = "authorization";
 export const USER_PAYLOAD = "x-user-payload";

@@ -2,8 +2,8 @@ import { Module } from '@nestjs/common';
 import { ReportService } from './report.service';
 import { ReportController } from './report.controller';
 import { MongooseModule } from '@nestjs/mongoose';
-import { DailySaleStats, DailySaleStatsSchema } from './schemas/daily_sale_stats.schema';
-import { MonthlySaleStats, MonthlySaleStatsSchema } from './schemas/monthly_sale_stats.schema';
+import { DailySaleStats, DailySaleStatsSchema } from './schemas/daily-sale-stats.schema';
+import { MonthlySaleStats, MonthlySaleStatsSchema } from './schemas/monthly-sale-stats.schema';
 
 @Module({
   imports: [
