@@ -249,15 +249,15 @@ src/
 
 ### System Architecture
 
-![System Architecture](docs/system.png)
+![System Architecture](public/system.png)
 
 ### Database Models
 
-![Database Models](docs/db-model.png)
+![Database Models](public/db-model.png)
 
 ### Security Flow
 
-![Security Flow](docs/sc-flow.png)
+![Security Flow](public/sc-flow.png)
 
 ## Scripts
 
