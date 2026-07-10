@@ -1,4 +1,13 @@
-import { Body, Controller, Delete, ParseFilePipe, Post, Query, UploadedFile, UploadedFiles, UseInterceptors } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Post,
+  Query,
+  UploadedFile,
+  UploadedFiles,
+  UseInterceptors,
+} from '@nestjs/common';
 import { UploadService } from './upload.service';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import {
@@ -62,11 +71,16 @@ export class UploadController {
   @Post('single')
   @UseInterceptors(FileInterceptor('file'))
   async uploadSingle(
-    @UploadedFile( 
-      new FileSizeValidationPipe(5), 
-      new FileTypeValidationPipe(['image/jpeg', 'image/png', 'application/pdf']),
-    ) file: Express.Multer.File,
-    @CurrentUser('sub') userId: string
+    @UploadedFile(
+      new FileSizeValidationPipe(5),
+      new FileTypeValidationPipe([
+        'image/jpeg',
+        'image/png',
+        'application/pdf',
+      ]),
+    )
+    file: Express.Multer.File,
+    @CurrentUser('sub') userId: string,
   ) {
     return this.uploadService.upload(file, userId);
   }
@@ -88,7 +102,10 @@ export class UploadController {
   })
   @ApiOkResponse({
     description: 'All files uploaded successfully',
-    schema: swWrap({ type: 'array', items: uploadedFileSchema }, 'Files uploaded successfully'),
+    schema: swWrap(
+      { type: 'array', items: uploadedFileSchema },
+      'Files uploaded successfully',
+    ),
   })
   @ApiBadRequestResponse({ description: 'One or more files failed to upload' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
@@ -97,29 +114,35 @@ export class UploadController {
   async uploadMultiple(
     @UploadedFiles(
       new FileSizeValidationPipe(5),
-      new FileTypeValidationPipe(['image/jpeg', 'image/png', 'application/pdf']),
-    ) files: Express.Multer.File[],
-    @CurrentUser('sub') userId: string
+      new FileTypeValidationPipe([
+        'image/jpeg',
+        'image/png',
+        'application/pdf',
+      ]),
+    )
+    files: Express.Multer.File[],
+    @CurrentUser('sub') userId: string,
   ) {
     return this.uploadService.multipleUpload(files, userId);
   }
 
-@ApiOperation({ summary: 'Replace an uploaded file' })
+  @ApiOperation({ summary: 'Replace an uploaded file' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
-    description: 'Provide the publicId (or full URL) of the file to replace and attach the new file.',
+    description:
+      'Provide the publicId (or full URL) of the file to replace and attach the new file.',
     schema: {
       type: 'object',
       required: ['imgUrl', 'file'], // Đổi tên cho khớp với code
       properties: {
-        imgUrl: { 
-          type: 'string', 
-          description: 'The Public ID or URL of the old file' 
+        imgUrl: {
+          type: 'string',
+          description: 'The Public ID or URL of the old file',
         },
-        file: { 
-          type: 'string', 
+        file: {
+          type: 'string',
           format: 'binary',
-          description: 'The new file to upload'
+          description: 'The new file to upload',
         },
       },
     },
@@ -128,17 +151,24 @@ export class UploadController {
     description: 'File replaced successfully',
     schema: swWrap(uploadedFileSchema, 'File replaced successfully'),
   })
-  @ApiBadRequestResponse({ description: 'Invalid file, imgUrl, or replace failed' })
+  @ApiBadRequestResponse({
+    description: 'Invalid file, imgUrl, or replace failed',
+  })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   @Post('replace')
   @UseInterceptors(FileInterceptor('file'))
   async replaceFile(
-    @Body('imgUrl') imgUrl: string, 
+    @Body('imgUrl') imgUrl: string,
     @UploadedFile(
       new FileSizeValidationPipe(5),
-      new FileTypeValidationPipe(['image/jpeg', 'image/png', 'application/pdf']),
-    ) file: Express.Multer.File,
-    @CurrentUser('sub') userId: string
+      new FileTypeValidationPipe([
+        'image/jpeg',
+        'image/png',
+        'application/pdf',
+      ]),
+    )
+    file: Express.Multer.File,
+    @CurrentUser('sub') userId: string,
   ) {
     return this.uploadService.replaceUpload(imgUrl, file, userId);
   }
@@ -158,9 +188,7 @@ export class UploadController {
   @ApiBadRequestResponse({ description: 'Failed to delete file' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   @Delete()
-  async deleteFile(
-    @Query('imgUrl') imgUrl: string
-  ) {
+  async deleteFile(@Query('imgUrl') imgUrl: string) {
     return this.uploadService.delete(imgUrl);
   }
 }

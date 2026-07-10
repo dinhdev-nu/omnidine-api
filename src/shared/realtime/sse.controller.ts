@@ -9,9 +9,9 @@ export class SseController {
 
   @Sse('stream')
   @BypassInterceptors()
-  streamEvents(@CurrentUser("sub") id: Types.ObjectId) {
-    console.log(`User ${id} connected to SSE stream`);
-    return this.sseService.subscribeToEvents(id.toString());
+  streamEvents(@CurrentUser('sub') id: Types.ObjectId) {
+    const userId = id.toString();
+    console.log(`User ${userId} connected to SSE stream`);
+    return this.sseService.subscribeToEvents(userId);
   }
-  
 }

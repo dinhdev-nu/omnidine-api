@@ -9,13 +9,15 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { INJECTION_TOKEN } from 'src/common/constants/injection-token.constant';
 import { OrderRepository } from './repositories/order.repository';
 import { Order, OrderSchema } from './schemas/order.schema';
-import { MenuItem, MenuItemSchema } from '../restaurant/menu/schemas/menu-item.schema';
+import {
+  MenuItem,
+  MenuItemSchema,
+} from '../restaurant/menu/schemas/menu-item.schema';
 import {
   Restaurant,
   RestaurantSchema,
 } from '../restaurant/schemas/restaurant.schema';
 import { Table, TableSchema } from '../restaurant/table/schemas/table.schema';
-import { SseModule } from '../sse/sse.module';
 import { AuthModule } from '../auth/auth.module';
 import { OptionalPublicUserInterceptor } from './interceptors/optional-public-user.interceptor';
 import { MenuItemRepository } from '../restaurant/menu/repositories/menu-item.repository';
@@ -43,7 +45,7 @@ import { RestaurantModule } from '../restaurant/restaurant.module';
     {
       provide: INJECTION_TOKEN.MENU_ITEM_REPOSITORY,
       useClass: MenuItemRepository,
-    }
+    },
   ],
   imports: [
     AuthModule,
@@ -54,7 +56,6 @@ import { RestaurantModule } from '../restaurant/restaurant.module';
       { name: Restaurant.name, schema: RestaurantSchema },
       { name: Table.name, schema: TableSchema },
     ]),
-    SseModule,
   ],
 })
 export class OrderModule {}

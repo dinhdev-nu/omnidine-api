@@ -238,13 +238,14 @@ src/
 ├── queue/                  # BullMQ jobs
 ├── shared/                 # Shared services
 │   ├── mail/               # Email service
+│   ├── realtime/           # Server-Sent Events
 │   └── throttler/          # Rate limiting
 └── modules/                # Feature modules
     ├── auth/               # Authentication
     ├── restaurant/         # Restaurants
     ├── order/              # Orders
     ├── payment/            # Payments
-    └── sse/                # Server-Sent Events
+    └── upload/             # File upload capability
 ```
 
 ### System Architecture

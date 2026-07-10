@@ -1,10 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, type MessageEvent } from '@nestjs/common';
 import { filter, finalize, map, Subject } from 'rxjs';
 import { SseEvent } from './dto/sse-event.dto';
 
 @Injectable()
 export class SseService {
-
   // Có vấn đề Subject -> User A, B,... -> Filter
   private eventsStreams = new Subject<SseEvent>();
 
@@ -15,9 +14,11 @@ export class SseService {
   subscribeToEvents(userId: string) {
     return this.eventsStreams.asObservable().pipe(
       filter((e: SseEvent) => e.userId === userId),
-      map((e: SseEvent) => ({ data: e.data, type: e.type } as MessageEvent)),
+      map((e: SseEvent): MessageEvent => ({ data: e.data, type: e.type })),
 
-      finalize(() => console.log(`User ${userId} unsubscribed from SSE events`))
-    )
+      finalize(() =>
+        console.log(`User ${userId} unsubscribed from SSE events`),
+      ),
+    );
   }
 }
