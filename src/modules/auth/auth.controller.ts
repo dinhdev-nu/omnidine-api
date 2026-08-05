@@ -384,17 +384,20 @@ export class AuthController {
 
     @ApiOperation({
         summary: 'Request password reset — sends OTP to email',
-        description: '**Rate limit:** 5 requests per hour.',
+        description: '**Rate limit:** 5 requests per account per hour, plus the endpoint IP limit.',
     })
     @ApiBody({ type: ForgotPasswordDTO })
     @ApiOkResponse({
-        description: 'OTP sent — use session_token in the next step',
+        description: 'Generic response — use session_token in the next step',
         schema: swWrap(
             {
                 type: 'object',
                 required: ['message', 'session_token'],
                 properties: {
-                    message: { type: 'string', example: 'OTP đã được gửi đến email của bạn' },
+                    message: {
+                        type: 'string',
+                        example: 'Nếu email tồn tại và có thể khôi phục, OTP đã được gửi đến email của bạn',
+                    },
                     session_token: {
                         type: 'string',
                         example: '8f2477b4726f4f9b9d6b8fa54f0f0b74',
@@ -402,11 +405,10 @@ export class AuthController {
                     },
                 },
             },
-            'OTP sent to your email'
+            'Generic password-reset request response'
         ),
     })
     @ApiBadRequestResponse({ description: 'Invalid request body' })
-    @ApiNotFoundResponse({ description: 'User email not found or account banned' })
     @ApiTooManyRequestsResponse({ description: 'Rate limit: 5 requests per hour' })
     @ApiInternalServerErrorResponse({ description: 'Unexpected server error' })
     @Public()

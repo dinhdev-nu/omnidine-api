@@ -343,7 +343,12 @@ export class PaymentService {
 
 		const { updatedPayment, nextOrderStatus, nextOrderPaymentStatus } = transactionResult;
 
-		await this.invalidatePaymentCaches(orderObjectId, paymentObjectId, false);
+		await this.invalidatePaymentCaches(
+			resObjecId,
+			orderObjectId,
+			paymentObjectId,
+			false,
+		);
 		await this.cachePaymentDetail(updatedPayment);
 
 		return {
@@ -362,12 +367,6 @@ export class PaymentService {
 	): Promise<Record<string, unknown>> {
 		const restaurantObjectId = ObjectIdUtil.toObjectId(restaurantId, 'restaurantId');
 		const orderObjectId = ObjectIdUtil.toObjectId(orderId, 'orderId');
-		const cacheKey = `${CACHE_PAYMENT_LIST_PREFIX}${orderObjectId.toString()}`;
-
-		const cached = await this.redis.get(cacheKey);
-		if (cached) {
-			return JSON.parse(cached) as Record<string, unknown>;
-		}
 
 		const order = await this.orderRepository.findByIdInRestaurant(
 			restaurantObjectId,
@@ -383,6 +382,15 @@ export class PaymentService {
 					restaurant_id: restaurantObjectId.toString(),
 				},
 			);
+		}
+
+		const cacheKey = this.paymentListCacheKey(
+			restaurantObjectId,
+			orderObjectId,
+		);
+		const cached = await this.redis.get(cacheKey);
+		if (cached) {
+			return JSON.parse(cached) as Record<string, unknown>;
 		}
 
 		const [payments, settlement] = await Promise.all([
@@ -409,28 +417,12 @@ export class PaymentService {
 		const restaurantObjectId = ObjectIdUtil.toObjectId(restaurantId, 'restaurantId');
 		const orderObjectId = ObjectIdUtil.toObjectId(orderId, 'orderId');
 		const paymentObjectId = ObjectIdUtil.toObjectId(paymentId, 'paymentId');
-		const cacheKey = `${CACHE_PAYMENT_PREFIX}${paymentObjectId.toString()}`;
-
-		if (!includeGatewayResponse) {
-			const cached = await this.redis.get(cacheKey);
-			if (cached) {
-				return JSON.parse(cached) as Record<string, unknown>;
-			}
-		}
-
-		const payment = await this.paymentRepository.findById(paymentObjectId);
+		const payment = await this.paymentRepository.findByIdInOrder(
+			restaurantObjectId,
+			orderObjectId,
+			paymentObjectId,
+		);
 		if (!payment) {
-			throw new NotFoundException(
-				ERROR_CODE.RESOURCE_NOT_FOUND,
-				'Payment not found',
-				{ payment_id: paymentObjectId.toString() },
-			);
-		}
-
-		if (
-			!ObjectIdUtil.isSameObjectId(payment.restaurant_id, restaurantObjectId) ||
-			!ObjectIdUtil.isSameObjectId(payment.order_id, orderObjectId)
-		) {
 			throw new NotFoundException(
 				ERROR_CODE.RESOURCE_NOT_FOUND,
 				'Payment not found',
@@ -440,6 +432,19 @@ export class PaymentService {
 					restaurant_id: restaurantObjectId.toString(),
 				},
 			);
+		}
+
+		const cacheKey = this.paymentDetailCacheKey(
+			restaurantObjectId,
+			orderObjectId,
+			paymentObjectId,
+		);
+
+		if (!includeGatewayResponse) {
+			const cached = await this.redis.get(cacheKey);
+			if (cached) {
+				return JSON.parse(cached) as Record<string, unknown>;
+			}
 		}
 
 		const response = this.toPaymentDetailItem(payment, includeGatewayResponse);
@@ -664,8 +669,14 @@ export class PaymentService {
 		const { createdPayment, orderPaymentStatus } = transactionResult;
 
 		await this.invalidatePaymentCaches(
+			input.restaurantId,
 			input.orderId,
-			ObjectIdUtil.toObjectId((createdPayment as any)._id, 'payment_id'),
+			ObjectIdUtil.toObjectId(
+				this.readEntityId(
+					createdPayment as unknown as Record<string, unknown>,
+				),
+				'payment_id',
+			),
 			createdPayment.status === PaymentStatus.PENDING,
 			createdPayment,
 		);
@@ -863,12 +874,17 @@ export class PaymentService {
 	}
 
 	private async invalidatePaymentCaches(
+		restaurantId: Types.ObjectId,
 		orderId: Types.ObjectId,
 		paymentId: Types.ObjectId,
 		setPendingCache: boolean,
 		payment?: PaymentDocument,
 	): Promise<void> {
 		const keys = [
+			this.paymentListCacheKey(restaurantId, orderId),
+			this.paymentDetailCacheKey(restaurantId, orderId, paymentId),
+			this.pendingPaymentCacheKey(restaurantId, orderId, paymentId),
+			// Remove legacy non-tenant keys during the migration window.
 			`${CACHE_PAYMENT_LIST_PREFIX}${orderId.toString()}`,
 			`${CACHE_PAYMENT_PREFIX}${paymentId.toString()}`,
 			`${CACHE_PENDING_PAYMENT_PREFIX}${paymentId.toString()}`,
@@ -882,9 +898,16 @@ export class PaymentService {
 	}
 
 	private async cachePaymentDetail(payment: PaymentDocument): Promise<void> {
+		const paymentId = this.readEntityId(
+			payment as unknown as Record<string, unknown>,
+		);
 		await this.redis.set(
-			`${CACHE_PAYMENT_PREFIX}${this.readEntityId(payment as any)}`,
-			JSON.stringify(payment),
+			this.paymentDetailCacheKey(
+				payment.restaurant_id,
+				payment.order_id,
+				paymentId,
+			),
+			JSON.stringify(this.toPaymentDetailItem(payment, false)),
 			'EX',
 			300,
 		);
@@ -895,18 +918,48 @@ export class PaymentService {
 		paymentUrl: string | null = null,
 		qrCodeUrl: string | null = null,
 	): Promise<void> {
+		const paymentId = this.readEntityId(
+			payment as unknown as Record<string, unknown>,
+		);
 		await this.redis.set(
-			`${CACHE_PENDING_PAYMENT_PREFIX}${this.readEntityId(payment as any)}`,
+			this.pendingPaymentCacheKey(
+				payment.restaurant_id,
+				payment.order_id,
+				paymentId,
+			),
 			JSON.stringify({
 				amount: payment.amount,
 				payment_number: payment.payment_number,
-				expires_at: (payment as any).expires_at ?? null,
+				expires_at: payment.expires_at ?? null,
 				payment_url: paymentUrl,
 				qr_code_url: qrCodeUrl,
 			}),
 			'EX',
 			PAYMENT_PENDING_TTL_SECONDS,
 		);
+	}
+
+	private paymentListCacheKey(
+		restaurantId: Types.ObjectId | string,
+		orderId: Types.ObjectId | string,
+	): string {
+		return `${CACHE_PAYMENT_LIST_PREFIX}${restaurantId.toString()}:${orderId.toString()}`;
+	}
+
+	private paymentDetailCacheKey(
+		restaurantId: Types.ObjectId | string,
+		orderId: Types.ObjectId | string,
+		paymentId: Types.ObjectId | string,
+	): string {
+		return `${CACHE_PAYMENT_PREFIX}${restaurantId.toString()}:${orderId.toString()}:${paymentId.toString()}`;
+	}
+
+	private pendingPaymentCacheKey(
+		restaurantId: Types.ObjectId | string,
+		orderId: Types.ObjectId | string,
+		paymentId: Types.ObjectId | string,
+	): string {
+		return `${CACHE_PENDING_PAYMENT_PREFIX}${restaurantId.toString()}:${orderId.toString()}:${paymentId.toString()}`;
 	}
 
 	private buildOrderPaymentSummary(

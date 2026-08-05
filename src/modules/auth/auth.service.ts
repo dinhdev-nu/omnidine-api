@@ -19,6 +19,7 @@ import { ObjectIdUtil } from "src/common/utils/object-id.util";
 import { DeviceInfo, UserSessionDocument } from "./schemas/user-session.schema";
 import { IOAuthProviderRepository } from "./repositories/oauth-provider.repository";
 import { InjectConnection } from "@nestjs/mongoose";
+import { PasswordResetStore } from "./password-reset.store";
 
 const OTP_EMAIL_PREFIX = "otp:email_verify:"
 const LOGIN_FAILED_PREFIX = "login:fail:"
@@ -33,6 +34,7 @@ const RORATE_RESULT_PREFIX = "rotate_result:";
 const OTP_PWRESET_PREFIX = "otp:pwreset:";
 const PWRESET_SESSION_PREFIX = "pwreset:session:";
 const PWRESET_GRANT_PREFIX = "pwreset:grant:";
+const PWRESET_REQUEST_RATE_PREFIX = "rate:pwreset:request:";
 const RATELIMIT_CHANGE_PW_PREFIX = "rate:change_pw:";
 
 const RATELIMIT_SMS_PREFIX = "rate:sms:";
@@ -48,6 +50,11 @@ interface PENDING_2FA_DATA {
     send_to: string; // email or phone number
 }
 const OTP_EXPIRATION_TIME = 5 * 60; // 5 minutes
+const PWRESET_SESSION_EXPIRATION_TIME = 15 * 60;
+const PWRESET_GRANT_EXPIRATION_TIME = 15 * 60;
+const PWRESET_REQUEST_WINDOW_SECONDS = 60 * 60;
+const PWRESET_REQUEST_LIMIT = 5;
+const PWRESET_MAX_OTP_ATTEMPTS = 5;
 const OTP_2FA_PREFIX = "otp:2fa:";
 type OTPValue = {
     otpHash: string;
@@ -88,6 +95,8 @@ const REFRESH_TTL_NOT_REMEMBER = "24h"; // 24 hours
 
 @Injectable()
 export class AuthService {
+    private readonly passwordResetStore: PasswordResetStore;
+
     constructor(
         @Inject(INJECTION_TOKEN.USER_REPOSITORY) 
         private readonly userRepository: IUserRepository,
@@ -109,7 +118,9 @@ export class AuthService {
         private readonly jwt: JwtService,
 
         private readonly otpProducer: OTPProducer
-    ) {}
+    ) {
+        this.passwordResetStore = new PasswordResetStore(redis);
+    }
 
     async checkEmailExist(dto: CheckEmailDTO): 
     Promise<{ available: boolean, acction?: string, hint?: string }> 
@@ -724,76 +735,95 @@ export class AuthService {
 
     // Password 
     async forgotPassword(email: string): Promise<{ message: string, session_token: string }> {
-        const user = await this.userRepository.findUserExistByEmail(email);
-        if (!user || user.status === 'banned') {
-            throw new NotFoundException(ERROR_CODE.USER_NOT_FOUND, `Email ${email} không tồn tại`)
+        const normalizedEmail = email.trim().toLowerCase();
+        const emailHash = await HashUtil.hashWithSHA256(normalizedEmail);
+        const requestRate = await this.passwordResetStore.incrementRequestCount(
+            `${PWRESET_REQUEST_RATE_PREFIX}${emailHash}`,
+            PWRESET_REQUEST_WINDOW_SECONDS,
+        );
+
+        if (requestRate.count > PWRESET_REQUEST_LIMIT) {
+            throw new TooManyRequestException(
+                ERROR_CODE.OTP_SEND_LIMIT_EXCEEDED,
+                "Bạn đã yêu cầu đặt lại mật khẩu quá nhiều lần. Vui lòng thử lại sau.",
+            );
         }
 
-        // Generate session for forgot password
+        const user = await this.userRepository.findUserExistByEmail(normalizedEmail);
+        const canResetPassword = user !== null && user.status !== 'banned';
         const sessionToken = await HashUtil.randomBytesHex(32);
-        await Promise.all([
-            this.redis.set(`${PWRESET_SESSION_PREFIX}${sessionToken}`, JSON.stringify({
-                user_id: user._id,
-            }), 'EX', 15 * 60), // 15 minutes
-            
-            this.redis.del(`${OTP_PWRESET_PREFIX}${user._id}`), // Xoá OTP cũ nếu có
-        ])
-        
+        const sessionKey = `${PWRESET_SESSION_PREFIX}${sessionToken}`;
+        const otpKey = `${OTP_PWRESET_PREFIX}${sessionToken}`;
         const otp = OtpUtils.generateOTP();
         const hashedOTP = await HashUtil.hashWithSHA256(otp);
-        await this.redis.set(`${OTP_PWRESET_PREFIX}${user._id}`, JSON.stringify({
-            otpHash: hashedOTP,
-            attempt: 0
-        } as OTPValue), 'EX', OTP_EXPIRATION_TIME);
+
+        await Promise.all([
+            this.redis.set(
+                sessionKey,
+                JSON.stringify(
+                    canResetPassword
+                        ? { user_id: user._id.toString(), decoy: false }
+                        : { decoy: true },
+                ),
+                'EX',
+                PWRESET_SESSION_EXPIRATION_TIME,
+            ),
+            this.redis.set(
+                otpKey,
+                JSON.stringify({ otpHash: hashedOTP, attempt: 0 } as OTPValue),
+                'EX',
+                OTP_EXPIRATION_TIME,
+            ),
+        ]);
+
+        if (canResetPassword) {
+            await this.otpProducer.sendMailOTP({
+                email: user.email,
+                userId: user._id,
+                otp,
+                ttl: OTP_EXPIRATION_TIME,
+            });
+        }
         
-        await this.otpProducer.sendMailOTP({
-            email: user.email,
-            userId: user._id,
-            otp,
-            ttl: OTP_EXPIRATION_TIME
-        })
-        
-        return { message: "OTP đã được gửi đến email của bạn", session_token: sessionToken };
+        return {
+            message: "Nếu email tồn tại và có thể khôi phục, OTP đã được gửi đến email của bạn",
+            session_token: sessionToken,
+        };
     }
 
     async verifyForgotPasswordOTP(session_token: string, otp: string): Promise<{ verified: boolean, reset_grant_token: string}> {
-        // Get session data
         const sessionKey = `${PWRESET_SESSION_PREFIX}${session_token}`;
-        const rawSession = await this.redis.get(sessionKey);
-        if (!rawSession) {
-            throw new BadRequestException(ERROR_CODE.TEMP_TOKEN_NOT_FOUND, "Phiên hết hạn")
-        }
-        // Get otp
-        const sessionData = JSON.parse(rawSession) as { user_id: string };
-        const otpKey = `${OTP_PWRESET_PREFIX}${sessionData.user_id}`;
-        const rawOtp = await this.redis.get(otpKey);
-        if (!rawOtp) {
-            throw new NotFoundException(ERROR_CODE.OTP_NOT_FOUND, "OTP đã hết hạn")
-        }
-
-        const otpData = JSON.parse(rawOtp) as OTPValue;
-        if (otpData.attempt >= 5) {
-            await this.redis.del(otpKey);
-            throw new TooManyRequestException(ERROR_CODE.OTP_ATTEMPT_EXCEEDED, "Nhập sai OTP quá số lần cho phép. Vui lòng yêu cầu lại")
-        }
-
-        // Check OTP 
-        const isValidOTP = await HashUtil.compareSha256(otp, otpData.otpHash);
-        if (!isValidOTP) {
-            otpData.attempt += 1;
-            await this.redis.set(otpKey, JSON.stringify(otpData), 'KEEPTTL');
-            throw new BadRequestException(ERROR_CODE.OTP_INVALID, `Sai OTP. Còn ${5 - otpData.attempt} lần thử`)
-        }
-
-        // Generate reset token
+        const otpKey = `${OTP_PWRESET_PREFIX}${session_token}`;
         const grantToken = await HashUtil.randomBytesHex(32);
-        await Promise.all([
-            this.redis.set(`${PWRESET_GRANT_PREFIX}${grantToken}`, JSON.stringify({
-                user_id: sessionData.user_id
-            }), 'EX', 15 * 60), // 15 minutes
-            this.redis.del(otpKey),
-            this.redis.del(sessionKey)
-        ])
+        const grantKey = `${PWRESET_GRANT_PREFIX}${grantToken}`;
+        const submittedOtpHash = await HashUtil.hashWithSHA256(otp);
+        const verification = await this.passwordResetStore.verifyOtpAndIssueGrant({
+            sessionKey,
+            otpKey,
+            grantKey,
+            submittedOtpHash,
+            maxAttempts: PWRESET_MAX_OTP_ATTEMPTS,
+            grantTtlSeconds: PWRESET_GRANT_EXPIRATION_TIME,
+        });
+
+        if (verification.status === 'session_not_found') {
+            throw new BadRequestException(ERROR_CODE.TEMP_TOKEN_NOT_FOUND, "Phiên đã hết hạn");
+        }
+        if (verification.status === 'otp_not_found') {
+            throw new NotFoundException(ERROR_CODE.OTP_NOT_FOUND, "OTP đã hết hạn");
+        }
+        if (verification.status === 'attempts_exceeded') {
+            throw new TooManyRequestException(
+                ERROR_CODE.OTP_ATTEMPT_EXCEEDED,
+                "Nhập sai OTP quá số lần cho phép. Vui lòng yêu cầu lại",
+            );
+        }
+        if (verification.status === 'invalid') {
+            throw new BadRequestException(
+                ERROR_CODE.OTP_INVALID,
+                `Sai OTP. Còn ${verification.remainingAttempts} lần thử`,
+            );
+        }
 
         return { verified: true, reset_grant_token: grantToken }
     }
@@ -801,13 +831,10 @@ export class AuthService {
     async resetPassword(grant_token: string, new_password: string): Promise<{ reset: boolean }> {
         // Get grant data
         const grantKey = `${PWRESET_GRANT_PREFIX}${grant_token}`;
-        const rawGrant = await this.redis.get(grantKey);
+        const rawGrant = await this.passwordResetStore.consumeGrant(grantKey);
         if (!rawGrant) {
             throw new BadRequestException(ERROR_CODE.TEMP_TOKEN_NOT_FOUND, "Phiên hết hạn")
         }
-        
-        // Xóa grant token để đảm bảo tính một lần
-        await this.redis.del(grantKey);
         
         const { user_id } = JSON.parse(rawGrant) as { user_id: string };
         const userID = ObjectIdUtil.toObjectId(user_id, "user_id");
@@ -818,7 +845,6 @@ export class AuthService {
         // Update password in DB
         await this.userRepository.update(userID, {
             password_hash: hashedPassword,
-            status: 'active' // Kích hoạt lại tài khoản nếu đang ở trạng thái pending
         })
 
         // Revoke all sessions

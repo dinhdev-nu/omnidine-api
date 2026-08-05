@@ -441,13 +441,15 @@ export class MenuService {
         resId: Types.ObjectId,
         itemId: Types.ObjectId,
     ): Promise<Record<string, unknown>> {
-        const cacheKey = `${CACHE_MENU_ITEM_PREFIX}${itemId.toString()}`;
+        // Authorize the resource scope before consulting Redis so warm-cache and
+        // cold-cache requests enforce the same tenant boundary.
+        const item = await this.getItemOrThrow(resId, itemId);
+        const cacheKey = `${CACHE_MENU_ITEM_PREFIX}${resId.toString()}:${itemId.toString()}`;
         const cached = await this.redis.get(cacheKey);
         if (cached) {
             return JSON.parse(cached) as Record<string, unknown>;
         }
 
-        const item = await this.getItemOrThrow(resId, itemId);
         const mapped = this.toPlainObject(item);
 
         await this.redis.set(
@@ -1059,6 +1061,8 @@ export class MenuService {
         
         keys.add(`${CACHE_MENU_PUBLIC_PREFIX}${restaurantId.toString()}`);
         if (options.include_item_detail && options.item_id) {
+            keys.add(`${CACHE_MENU_ITEM_PREFIX}${restaurantId.toString()}:${options.item_id.toString()}`);
+            // Remove legacy non-tenant keys during the migration window.
             keys.add(`${CACHE_MENU_ITEM_PREFIX}${options.item_id.toString()}`);
         }
 
