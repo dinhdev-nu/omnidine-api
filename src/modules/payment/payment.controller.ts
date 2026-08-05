@@ -5,8 +5,6 @@ import {
   Param,
   Post,
   Query,
-  HttpCode,
-  HttpStatus,
 } from '@nestjs/common';
 import { PaymentService } from './payment.service';
 import {
@@ -14,9 +12,7 @@ import {
   CreatePaymentDto,
   RefundPaymentDto,
 } from './dto/create-payment.dto';
-import { RequirePermission, RequireRestaurant, Roles } from 'src/common/decorators';
-import { ROLE } from 'src/common/constants/role.constant';
-import { PaymentMethod } from './schemas/payment.schema';
+import { RequirePermission, RequireRestaurant } from 'src/common/decorators';
 import { StaffPermissionKey } from '../restaurant/staff/schemas/staff.schema';
 import { CurrentActor } from 'src/common/decorators/user/current-actor.decorator';
 
@@ -79,7 +75,8 @@ export class OrderPaymentsController {
   }
 
   @Post(':paymentId/refund')
-  @RequirePermission(StaffPermissionKey.CAN_PROCESS_PAYMENT)
+  @RequireRestaurant()
+  @RequirePermission(StaffPermissionKey.CAN_REFUND)
   async refundPayment(
     @Param('id') restaurantId: string,
     @Param('orderId') orderId: string,

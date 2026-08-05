@@ -4,10 +4,9 @@ export const OTP_LENGTH = 6;
 
 export const OtpUtils = {
     generateOTP: (): string => {
-        const timePart = Date.now().toString().slice(- OTP_LENGTH / 2)
-        const random = randomInt(0, 1000).toString().padStart(OTP_LENGTH / 2, "0")
-
-        return random + timePart;
+        return randomInt(0, 10 ** OTP_LENGTH)
+            .toString()
+            .padStart(OTP_LENGTH, "0");
     },
 
     isValidOTP: (otp: string): boolean => {
